@@ -68,7 +68,7 @@ button, select, input { min-height: 40px; } /* 手指好點 */
 .glass-wrap { container-type: inline-size; }
 .glasses {
   white-space: pre; overflow: hidden;
-  font-size: calc((100cqw - 24px) / 25);
+  font-size: calc((100cqw - 24px) / var(--gcols, 19));
   line-height: 1.32;
   display: block;
 }

@@ -86,8 +86,14 @@ function bar(v: number, n = 10) {
 
 // ---------- 眼鏡排版 ----------
 // G2 畫面 576×288：每行約 24 個中文字寬、最多 7 行。自己斷行，最新的字永遠在最下面，舊的從上面捲掉。
-const GLASS_COLS = 24;
-const GLASS_ROWS = 7;
+// 字幕大小可選：字越大，每行字數越少、行數越少
+let GLASS_COLS = 18;
+let GLASS_ROWS = 5;
+function setGlassSize(cols: number) {
+  GLASS_COLS = cols;
+  GLASS_ROWS = Math.max(3, Math.floor((cols + 1) / 3.4)); // 24→7、18→5、14→4
+  document.documentElement.style.setProperty('--gcols', String(cols + 1));
+}
 
 /** 字寬：中文 / 全形 = 1，英數半形 = 0.5 */
 const charW = (c: string) => (c.charCodeAt(0) < 0x2e80 ? 0.5 : 1);
@@ -620,6 +626,16 @@ async function boot() {
   const langSel = $<HTMLSelectElement>('lang');
   langSel.onchange = () => { captions.lang = langSel.value; };
   $('clearCap').onclick = () => captions.clear();
+  // 眼鏡字幕大小
+  const gSize = $<HTMLSelectElement>('glassSize');
+  try { gSize.value = localStorage.getItem('voiceid.glassSize.v1') || '18'; } catch { /* 略過 */ }
+  const applyG = () => {
+    setGlassSize(Number(gSize.value));
+    try { localStorage.setItem('voiceid.glassSize.v1', gSize.value); } catch { /* 略過 */ }
+    render();
+  };
+  gSize.onchange = applyG;
+  applyG();
   // 字幕字體大小（記住設定）
   const capSize = $<HTMLInputElement>('capSize');
   try { capSize.value = localStorage.getItem('voiceid.capSize.v1') || '22'; } catch { /* 略過 */ }
