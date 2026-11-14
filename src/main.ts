@@ -1,3 +1,4 @@
+declare const __BUILD__: string; // 打包時填入（用來確認手機拿到的是不是新版）
 import './style.css';
 import { VoiceIdEngine } from './dsp/engine';
 import { CamppBackend, loadCamppEmbedder } from './dsp/campp';
@@ -87,11 +88,11 @@ function bar(v: number, n = 10) {
 // ---------- 眼鏡排版 ----------
 // G2 畫面 576×288：每行約 24 個中文字寬、最多 7 行。自己斷行，最新的字永遠在最下面，舊的從上面捲掉。
 // 字幕大小可選：字越大，每行字數越少、行數越少
-let GLASS_COLS = 18;
+let GLASS_COLS = 14;
 let GLASS_ROWS = 5;
 function setGlassSize(cols: number) {
   GLASS_COLS = cols;
-  GLASS_ROWS = Math.max(3, Math.floor((cols + 1) / 3.4)); // 24→7、18→5、14→4
+  GLASS_ROWS = Math.max(3, Math.floor((cols + 1) / 2.9)); // 24→8、18→6、14→5、12→4（剛好填滿畫面）
   document.documentElement.style.setProperty('--gcols', String(cols + 1));
 }
 
@@ -150,11 +151,19 @@ function glassesText(): string {
     lines.push('');
     lines.push('單擊 開始/暫停   雙擊 離開');
   } else {
-    // 標題列：精簡成一行（聆聽狀態 + 現在說話的人 + 信心條）
-    const who = !engine.usable().length || quiet ? '' : ` > ${current ?? '辨識中'} ${bar(lastConf, 5)}`;
-    lines[0] = clip(`聆聽中${filterStrangers ? '[濾]' : ''}${who}`);
-    lines[1] = clip(ambientLine());
-    lines.push(...captionLines(GLASS_ROWS - 2));
+    const who = !engine.usable().length || quiet ? '' : ` ${current ?? '辨識中'}`;
+    if (GLASS_COLS <= 14) {
+      // 大字：狀態和環境合成一行，留更多行給字幕；有警報時整行顯示警報
+      const env = amb?.alert ? `!!${amb.alert}!!` : amb ? `${amb.levelLabel}` : '';
+      lines[0] = clip(`${filterStrangers ? '[濾]' : ''}${who.trim() || '聆聽中'} ${env}`);
+      lines.pop();
+      lines.push(...captionLines(GLASS_ROWS - 1));
+    } else {
+      // 標題列：精簡成一行（聆聽狀態 + 現在說話的人 + 信心條）
+      lines[0] = clip(`聆聽中${filterStrangers ? '[濾]' : ''}${who ? ` >${who} ${bar(lastConf, 5)}` : ''}`);
+      lines[1] = clip(ambientLine());
+      lines.push(...captionLines(GLASS_ROWS - 2));
+    }
   }
   return lines.join('\n');
 }
@@ -436,7 +445,7 @@ engine.onResult = (r) => {
     lastStranger = r.stranger;
     timeline.push({ t: Date.now(), name: r.name ?? (r.stranger ? null : r.best.name), stranger: r.stranger });
     while (timeline.length && timeline[0].t < Date.now() - 120_000) timeline.shift();
-    const label = r.stable ?? (lastStranger ? (filterStrangers ? '—（陌生人，已過濾）' : '陌生人') : '不確定');
+    const label = r.stable ?? (lastStranger ? '陌生人' : '不確定');
     current = label;
     // 只在穩定結果改變時記錄（剛開始還沒穩定時不記）
     if (r.changed && history[history.length - 1] !== label) {
@@ -576,6 +585,7 @@ async function setupCaptionEngine() {
 
 // ---------- 啟動 ----------
 async function boot() {
+  $('ver').textContent = `版本 ${__BUILD__}`;
   $('platform').textContent = '載入聲紋模型中…';
   // 優先用 CAM++ 深度模型；載入失敗（沒下載模型、舊瀏覽器）就改用 GMM 備援
   let modelError = '';
@@ -628,10 +638,10 @@ async function boot() {
   $('clearCap').onclick = () => captions.clear();
   // 眼鏡字幕大小
   const gSize = $<HTMLSelectElement>('glassSize');
-  try { gSize.value = localStorage.getItem('voiceid.glassSize.v1') || '18'; } catch { /* 略過 */ }
+  try { gSize.value = localStorage.getItem('voiceid.glassSize.v2') || '14'; } catch { /* 略過 */ }
   const applyG = () => {
     setGlassSize(Number(gSize.value));
-    try { localStorage.setItem('voiceid.glassSize.v1', gSize.value); } catch { /* 略過 */ }
+    try { localStorage.setItem('voiceid.glassSize.v2', gSize.value); } catch { /* 略過 */ }
     render();
   };
   gSize.onchange = applyG;

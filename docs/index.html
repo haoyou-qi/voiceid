@@ -14,7 +14,7 @@
     <title>聲紋辨識 VoiceID</title>
     <!-- ONNX Runtime（跑 CAM++ 聲紋模型）。檔案由 install.bat 複製到 public/ort/ -->
     <script src="./ort/ort.min.js"></script>
-    <link rel="stylesheet" href="./assets/main.css?v=2471c471" />
+    <link rel="stylesheet" href="./assets/main.css?v=3d1e8a11" />
   </head>
   <body>
     <main>
@@ -22,6 +22,7 @@
         <h1>聲紋辨識 VoiceID</h1>
         <span id="platform" class="tag">偵測中…</span>
       </header>
+      <div id="ver" class="hint" style="margin-top:-8px"></div>
       <div id="engineNote" class="hint warn"></div>
 
       <section>
@@ -30,9 +31,10 @@
         <div class="row">
           <label>眼鏡字幕大小
             <select id="glassSize">
-              <option value="24">標準（每行 24 字、7 行）</option>
-              <option value="18">大（每行 18 字、5 行）</option>
-              <option value="14">特大（每行 14 字、4 行）</option>
+              <option value="24">標準（每行 24 字）</option>
+              <option value="18">大（每行 18 字）</option>
+              <option value="14">特大（每行 14 字）</option>
+              <option value="12">超大（每行 12 字）</option>
             </select>
           </label>
         </div>
@@ -136,6 +138,6 @@
         </label>
       </section>
     </main>
-    <script type="module" src="./assets/main.js?v=2471c471"></script>
+    <script type="module" src="./assets/main.js?v=3d1e8a11"></script>
   </body>
 </html>
