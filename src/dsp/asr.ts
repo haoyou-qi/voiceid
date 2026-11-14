@@ -54,7 +54,8 @@ export class StreamingAsr {
   /** 處理速度跟不上時回報落後幾秒 */
   onLag: (sec: number) => void = () => {};
 
-  endpointSec = 1.0; // 停頓多久算一句結束
+  endpointSec = 1.0; // 停頓多久算一句結束（開新的一行，並重新判斷說話者）
+  softBreakSec = 0.5; // 句子中間停頓多久就換行（同一句、模型不重設，不會漏字）
   /** 斷句時是否也把編碼器記憶歸零（true：換語言比較不會漏字；false：句子中間停頓後比較不會漏字） */
   resetEncoderOnEndpoint = true;
   maxSentenceSec = 15; // 一句話最長多久就強制斷句
@@ -64,6 +65,8 @@ export class StreamingAsr {
   private states: Record<string, any> = {};
   private hyp: number[] = [];
   private seg: number[] = []; // 這句話目前辨識出的字
+  private breaks = new Set<number>(); // 在 seg 的哪些位置前面換行
+  private pendingBreak = false; // 已經停頓夠久，下一個字出現時換行
   private decOut: any = null;
   private trailingBlank = 0; // 這句話尾端連續沒有字的秒數
   private segSec = 0;
@@ -112,6 +115,8 @@ export class StreamingAsr {
     this.resetStates();
     this.hyp = new Array(this.cfg.contextSize).fill(this.cfg.blank);
     this.seg = [];
+    this.breaks.clear();
+    this.pendingBreak = false;
     this.decOut = null;
     this.trailingBlank = 0;
     this.segSec = 0;
@@ -184,6 +189,10 @@ export class StreamingAsr {
       for (let k = 1; k < logit.length; k++) if (logit[k] > logit[best]) best = k;
       this.segSec += frameSec;
       if (best !== this.cfg.blank) {
+        // 換行：這一行至少要有 3 個字，避免「這 / 個是…」這種猶豫造成的碎行
+        const lastBreak = Math.max(0, ...this.breaks);
+        if (this.pendingBreak && this.seg.length - lastBreak >= 3) this.breaks.add(this.seg.length);
+        this.pendingBreak = false;
         this.hyp.push(best);
         this.seg.push(best);
         this.trailingBlank = 0;
@@ -191,6 +200,7 @@ export class StreamingAsr {
         await this.runDecoder();
       } else {
         this.trailingBlank += frameSec;
+        if (this.seg.length && this.trailingBlank >= this.softBreakSec) this.pendingBreak = true;
       }
     }
     if (changed) this.onPartial(this.text());
@@ -202,12 +212,13 @@ export class StreamingAsr {
   /** 把辨識出的 token 接成句子：中文直接接；英文 ▁ 開頭代表新單字（前面加空格），一律小寫；中英文之間加空格 */
   private text() {
     let out = '';
-    for (const k of this.seg) {
-      let t = this.tokens[k] ?? '';
+    for (let i = 0; i < this.seg.length; i++) {
+      if (this.breaks.has(i)) out = out.trimEnd() + '\n'; // 依停頓換行
+      let t = this.tokens[this.seg[i]] ?? '';
       if (!t || t.startsWith('<')) continue; // <unk> 之類的特殊符號
       if (t.startsWith('▁')) {
         t = t.slice(1).toLowerCase();
-        out += (out && !out.endsWith(' ') ? ' ' : '') + t;
+        out += (out && !out.endsWith(' ') && !out.endsWith('\n') ? ' ' : '') + t;
       } else if (/^[\x00-\x7f]+$/.test(t)) {
         out += t.toLowerCase(); // 英文單字的後半段
       } else {
@@ -222,6 +233,8 @@ export class StreamingAsr {
     if (!this.seg.length) return;
     const t = this.text();
     this.seg = [];
+    this.breaks.clear();
+    this.pendingBreak = false;
     this.segSec = 0;
     this.trailingBlank = 0;
     // 一句話結束（已停頓 1 秒）就把解碼器上下文和編碼器記憶都歸零，每句話獨立辨識：

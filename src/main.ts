@@ -115,14 +115,16 @@ const clip = (t: string, cols = GLASS_COLS) => {
 
 /** 眼鏡上的字幕：最近幾句 + 正在說的句子，斷行後只留最後 rows 行 */
 function captionLines(rows: number): string[] {
-  const fmt = (who: string, text: string) => (who ? `${who}：` : '') + text;
-  const sentences = captions.lines.slice(-6).map((l) => fmt(whoLabel(l.speaker, l.stranger), l.text));
+  // 一句話裡依停頓分成好幾段：第一段前面加說話者名字，後面幾段縮排對齊
+  const fmt = (who: string, text: string) =>
+    text.split('\n').map((part, i) => (i === 0 ? (who ? `${who}：` : '') : who ? '　' : '') + part);
+  const pieces = captions.lines.slice(-8).flatMap((l) => fmt(whoLabel(l.speaker, l.stranger), l.text));
   if (captions.interim) {
     const a = captions.interimAttribution();
-    if (!a.drop) sentences.push(fmt(whoLabel(a.speaker, a.stranger), captions.interim + '…'));
+    if (!a.drop) pieces.push(...fmt(whoLabel(a.speaker, a.stranger), captions.interim + '…'));
   }
-  if (!sentences.length) sentences.push(captionSupported() ? '（等待說話…）' : '（此音源沒有字幕）');
-  return sentences.flatMap((t) => wrap(t)).slice(-rows);
+  if (!pieces.length) pieces.push(captionSupported() ? '（等待說話…）' : '（此音源沒有字幕）');
+  return pieces.flatMap((t) => wrap(t)).slice(-rows);
 }
 
 function glassesText(): string {
@@ -411,10 +413,10 @@ captions.onChange = () => {
   const ia = captions.interimAttribution();
   box.innerHTML = captions.lines
     .slice(-30)
-    .map((l) => `<div class="${l.stranger ? 'hint' : ''}">${capOnlyOn ? "" : `<b>${escapeHtml(whoLabel(l.speaker, l.stranger))}</b>：`}${escapeHtml(l.text)}</div>`)
+    .map((l) => `<div class="${l.stranger ? 'hint' : ''}">${capOnlyOn ? "" : `<b>${escapeHtml(whoLabel(l.speaker, l.stranger))}</b>：`}${escapeHtml(l.text).replace(/\n/g, '<br>')}</div>`)
     .join('') +
     (captions.interim && !ia.drop
-      ? `<div class="hint">${escapeHtml(whoLabel(ia.speaker, ia.stranger))}：${escapeHtml(captions.interim)}…</div>`
+      ? `<div class="hint">${escapeHtml(whoLabel(ia.speaker, ia.stranger))}：${escapeHtml(captions.interim).replace(/\n/g, '<br>')}…</div>`
       : '');
   box.scrollTop = box.scrollHeight;
   render();

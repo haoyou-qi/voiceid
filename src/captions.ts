@@ -166,11 +166,8 @@ export class Captions {
     this.commitQueue = this.commitQueue.then(async () => {
       const a = await pending;
       if (a.drop) return; // 陌生人：直接濾掉
-      const last = this.lines[this.lines.length - 1];
-      // 同一個人連續講，合併成同一行（太長才換行）
-      if (last && last.speaker === a.speaker && last.stranger === a.stranger && last.text.length + text.length < 40)
-        last.text += '，' + text;
-      else this.lines.push({ speaker: a.speaker, stranger: a.stranger, text });
+      // 每次停頓都是新的一行（不再把同一個人連續說的話併成一行）
+      this.lines.push({ speaker: a.speaker, stranger: a.stranger, text });
       if (this.lines.length > 200) this.lines.shift();
       this.onChange();
     });
