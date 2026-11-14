@@ -34,7 +34,8 @@ let captionEngine: 'local' | 'browser' = 'local';
 const CAP_ENGINE_KEY = 'voiceid.capEngine.v1';
 const ASR_MODEL_KEY = 'voiceid.asrModel.v1';
 let asrModel: AsrModelId = 'zhen';
-const CALIB_KEY = 'voiceid.ambientCalib.v1';
+const CALIB_KEY = 'voiceid.ambientCalib.v2'; // v2：改用估計分貝，舊的校正值不再適用
+const SENS_KEY = 'voiceid.ambientSens.v1';
 let ambient: AmbientMonitor = new AmbientMonitor(null);
 let amb: AmbientState | null = null; // 最新的環境狀態
 const captions = new Captions();
@@ -449,6 +450,19 @@ engine.onError = (e) => { $('scores').innerHTML = `<tbody><tr><td class="warn">�
 // ---------- 環境聲音 ----------
 function wireAmbient(tagErr: string) {
   try { ambient.calibOffset = Number(localStorage.getItem(CALIB_KEY) || 0); } catch { /* 略過 */ }
+  try { ambient.sensitivity = Number(localStorage.getItem(SENS_KEY) || 0); } catch { /* 略過 */ }
+  const sens = $<HTMLInputElement>('sens');
+  const showSens = () => {
+    const v = ambient.sensitivity;
+    $('sensVal').textContent = v === 0 ? '標準' : v > 0 ? `+${v}（更容易判成吵）` : `${v}（更不容易判成吵）`;
+  };
+  sens.value = String(ambient.sensitivity);
+  showSens();
+  sens.oninput = () => {
+    ambient.sensitivity = Number(sens.value);
+    try { localStorage.setItem(SENS_KEY, sens.value); } catch { /* 略過 */ }
+    showSens();
+  };
   $('ambNote').textContent = tagErr
     ? `聲音分類模型沒有載入（${tagErr}），目前只顯示吵雜程度。請重新執行 install.bat。`
     : '';
@@ -459,7 +473,7 @@ function wireAmbient(tagErr: string) {
     $('ambAdvice').textContent = st.alert ? '' : `建議：${st.advice}`;
     const p = st.probs;
     $('ambDetail').textContent =
-      `背景音量 ${st.floorDb.toFixed(0)} dB（已校正）・音量起伏 ${st.fluct.toFixed(0)} dB` +
+      `環境音量約 ${st.floorDb.toFixed(0)} 分貝（估計）・音量起伏 ${st.fluct.toFixed(0)} dB` +
       (p ? `・說話 ${(p.speech * 100).toFixed(0)}%・人群 ${(p.crowd * 100).toFixed(0)}%・音樂 ${(p.music * 100).toFixed(0)}%・車聲 ${(p.traffic * 100).toFixed(0)}%` : '');
     if (st.scene.includes('有音樂') && !st.alert) $('ambAdvice').textContent += '（有音樂，字幕可能比較不準）';
     render();
@@ -474,10 +488,14 @@ function wireAmbient(tagErr: string) {
     if (!micOn) return alert('請先按「開始聆聽」，在你覺得是「普通音量」的地方再按校正');
     const off = ambient.calibrate();
     try { localStorage.setItem(CALIB_KEY, String(off)); } catch { /* 略過 */ }
-    $('ambAdvice').textContent = `已校正：目前的背景音量設為「普通」（修正 ${off >= 0 ? '+' : ''}${off.toFixed(0)} dB）`;
+    $('ambAdvice').textContent = `已校正：目前的環境音量設為「普通」（修正 ${off >= 0 ? '+' : ''}${off.toFixed(0)} dB）`;
   };
   $('calibReset').onclick = () => {
     ambient.calibOffset = 0;
+    ambient.sensitivity = 0;
+    sens.value = '0';
+    showSens();
+    try { localStorage.removeItem(SENS_KEY); } catch { /* 略過 */ }
     try { localStorage.removeItem(CALIB_KEY); } catch { /* 略過 */ }
     $('ambAdvice').textContent = '已恢復預設校正';
   };

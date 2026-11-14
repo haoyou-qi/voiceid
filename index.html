@@ -47,11 +47,14 @@
         <div id="ambStatus" class="amb-status">開始聆聽後顯示</div>
         <div id="ambAdvice" class="amb-advice"></div>
         <div id="ambDetail" class="hint"></div>
+        <label>靈敏度：<b id="sensVal">標準</b>
+          <input id="sens" type="range" min="-15" max="15" step="1" value="0" />
+        </label>
         <div class="row">
           <button id="calib">這裡算「普通音量」（校正）</button>
           <button id="calibReset">恢復預設</button>
         </div>
-        <p class="hint">每支麥克風靈敏度不同，第一次使用請在一般辦公室 / 客廳的音量下按一次校正。警報聲（警笛、喇叭、火災警報、門鈴、哭聲、尖叫）會在眼鏡上顯示 5 秒。</p>
+        <p class="hint">分貝是依一般手機麥克風估算的（安靜 &lt; 45、普通 45–58、吵 58–68、很吵 &gt; 68）。覺得太遲鈍就把靈敏度往右拉；也可以在一般辦公室 / 客廳的音量下按一次校正。警報聲（警笛、喇叭、火災警報、門鈴、哭聲、尖叫）會在眼鏡上顯示 5 秒。</p>
         <h2 style="margin-top:10px">警報紀錄</h2>
         <ul id="alertLog"></ul>
       </section>

@@ -46,13 +46,15 @@ const LEVELS = [
   { label: '吵', advice: '請大聲一點', short: '請大聲' },
   { label: '很吵', advice: '請大聲說、靠近對方', short: '大聲+靠近' },
 ];
-// 背景音量分級（dBFS，經過校正後）
-const LEVEL_EDGES = [-55, -45, -35];
-/** 校正時「普通」對應的背景音量 */
-const CALIB_TARGET = -50;
+// 音量分級：用「估計分貝」（dB SPL）表示。
+// 一般手機麥克風 94 dB SPL ≈ -26 dBFS，所以 分貝 ≈ dBFS + 120（實際依麥克風而異，可用校正 / 靈敏度調整）
+const SPL_OFFSET = 120;
+const LEVEL_EDGES = [45, 58, 68]; // 安靜 < 45 ≤ 普通 < 58 ≤ 吵 < 68 ≤ 很吵
+/** 校正時「普通」對應的分貝 */
+const CALIB_TARGET = 52;
 
 export interface AmbientState {
-  floorDb: number; // 背景音量（已校正）
+  floorDb: number; // 環境音量（估計分貝，已含校正與靈敏度）
   level: number; // 0 安靜 ~ 3 很吵
   levelLabel: string;
   scene: string[]; // 例如 ['人聲吵雜', '有音樂']
@@ -70,7 +72,8 @@ const pct = (a: number[], p: number) => {
 };
 
 export class AmbientMonitor {
-  calibOffset = 0;
+  calibOffset = 0; // 校正值（dB）
+  sensitivity = 0; // 靈敏度（dB）：正值 = 更容易判成吵
   onUpdate: (s: AmbientState) => void = () => {};
   onAlert: (label: string) => void = () => {};
 
@@ -113,7 +116,7 @@ export class AmbientMonitor {
 
   /** 校正：把現在的背景音量當作「普通」 */
   calibrate(): number {
-    const raw = this.rawFloor();
+    const raw = this.rawFloor() + SPL_OFFSET + this.sensitivity;
     this.calibOffset = CALIB_TARGET - raw;
     return this.calibOffset;
   }
@@ -132,7 +135,8 @@ export class AmbientMonitor {
 
   private rawFloor(): number {
     const db = this.frameDb();
-    return db.length ? pct(db, 0.1) : -90; // 背景音量：取最安靜的 10%（說話的空檔），不受身邊說話聲影響
+    // 環境音量：取 30% 分位數。說話聲、音樂、人聲會反映進來，但偶爾一聲大響不會讓它跳到「很吵」
+    return db.length ? pct(db, 0.3) : -90;
   }
 
   private async update() {
@@ -142,7 +146,7 @@ export class AmbientMonitor {
       const db = this.frameDb();
       const valid = db.filter((v) => v > Math.max(...db) - 50); // 忽略數位靜音
       const fluct = valid.length > 20 ? pct(valid, 0.9) - pct(valid, 0.2) : 0;
-      const floorDb = this.rawFloor() + this.calibOffset;
+      const floorDb = this.rawFloor() + SPL_OFFSET + this.calibOffset + this.sensitivity;
       let level = LEVEL_EDGES.findIndex((e) => floorDb < e);
       if (level < 0) level = 3;
 
