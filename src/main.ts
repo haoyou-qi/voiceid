@@ -27,6 +27,7 @@ let lastConf = 0;
 let quiet = true;
 let current: string | null = null; // 目前畫面上顯示的說話者
 let micId = '';
+let capOnlyOn = false; // 「只開字幕」模式進行中
 const CALIB_KEY = 'voiceid.ambientCalib.v1';
 let ambient: AmbientMonitor = new AmbientMonitor(null);
 let amb: AmbientState | null = null; // 最新的環境狀態
@@ -46,7 +47,7 @@ captions.attribute = async (start: number, end: number): Promise<Attribution> =>
   return voteFrom(timeline, start, end, filterStrangers);
 };
 
-const whoLabel = (speaker: string | null, stranger: boolean) => (stranger ? '陌生人' : speaker ?? '？');
+const whoLabel = (speaker: string | null, stranger: boolean) => (capOnlyOn ? '' : stranger ? '陌生人' : speaker ?? '？');
 
 // ---------- 儲存（localStorage 在少數環境會丟錯，所以全部包 try） ----------
 function loadProfiles() {
@@ -104,6 +105,10 @@ function glassesText(): string {
   if (engine.mode === 'enrolling') {
     lines.push(`  錄音 ${engine.enrolledSeconds().toFixed(0)} / ${ENROLL_SEC} 秒`);
     lines.push(`  ${bar(engine.enrolledSeconds() / ENROLL_SEC, 15)}`);
+  } else if (capOnlyOn) {
+    lines[0] = 'VoiceID 只開字幕';
+    lines.pop();
+    lines.push(...captionLines(6));
   } else if (!micOn) {
     lines.push(engine.usable().length ? '  單擊：開始聆聽' : '  尚未建立聲紋檔（仍可看字幕）');
     lines.push('');
@@ -182,7 +187,11 @@ async function stopMic() {
 
 async function toggleListening() {
   if (engine.mode === 'enrolling') return;
-  if (micOn) {
+  if (capOnlyOn) {
+    capOnlyOn = false;
+    captions.stop();
+    void keepAwake(false);
+  } else if (micOn) {
     engine.stop();
     captions.stop();
     await stopMic();
@@ -197,11 +206,25 @@ async function toggleListening() {
     engine.startListening();
     ambient.reset();
     amb = null;
-    await startMic();
+    // iPhone：語音辨識一定要在「按下按鈕」的當下啟動，所以要在等麥克風之前先開字幕
+    const capOnly = $<HTMLInputElement>('capOnly').checked;
+    if (capOnly && !captionSupported()) {
+      $('capStatus').textContent = '這個瀏覽器不支援即時字幕，「只開字幕」無法使用';
+      return;
+    }
     if (captionSupported()) captions.start();
-    $('capStatus').textContent = captionSupported()
-      ? ''
-      : '字幕只支援「電腦麥克風」音源（Chrome / Edge）；目前只做說話者辨識';
+    else
+      $('capStatus').textContent = !Captions.supported()
+        ? '這個瀏覽器（或加入主畫面的模式）不支援即時字幕；iPhone 請改用 Safari 直接開網址試試'
+        : '字幕只支援麥克風音源；目前只做說話者辨識';
+    if (capOnly) {
+      // 只開字幕：不占用麥克風，讓語音辨識獨占（iPhone 相容）
+      engine.stop();
+      capOnlyOn = true;
+      void keepAwake(true);
+    } else {
+      await startMic();
+    }
   }
   updateButtons();
   render();
@@ -285,12 +308,13 @@ function renderProfiles() {
 function updateButtons() {
   const enrolling = engine.mode === 'enrolling';
   const listen = $<HTMLButtonElement>('listen');
-  listen.textContent = micOn && !enrolling ? '暫停聆聽' : '開始聆聽';
+  listen.textContent = (micOn || capOnlyOn) && !enrolling ? '暫停聆聽' : '開始聆聽';
   listen.disabled = enrolling;
   const enroll = $<HTMLButtonElement>('enroll');
   enroll.textContent = enrolling ? '結束建檔' : '錄音建檔';
   enroll.className = enrolling ? 'rec' : '';
-  $<HTMLSelectElement>('source').disabled = micOn;
+  $<HTMLSelectElement>('source').disabled = micOn || capOnlyOn;
+  $<HTMLInputElement>('capOnly').disabled = micOn || capOnlyOn;
 }
 
 async function refreshMics() {
@@ -345,7 +369,7 @@ captions.onChange = () => {
   const ia = captions.interimAttribution();
   box.innerHTML = captions.lines
     .slice(-30)
-    .map((l) => `<div class="${l.stranger ? 'hint' : ''}"><b>${escapeHtml(whoLabel(l.speaker, l.stranger))}</b>：${escapeHtml(l.text)}</div>`)
+    .map((l) => `<div class="${l.stranger ? 'hint' : ''}">${capOnlyOn ? "" : `<b>${escapeHtml(whoLabel(l.speaker, l.stranger))}</b>：`}${escapeHtml(l.text)}</div>`)
     .join('') +
     (captions.interim && !ia.drop
       ? `<div class="hint">${escapeHtml(whoLabel(ia.speaker, ia.stranger))}：${escapeHtml(captions.interim)}…</div>`
@@ -354,6 +378,7 @@ captions.onChange = () => {
   render();
 };
 captions.onError = (m) => { $('capStatus').textContent = m; };
+captions.onStatus = (m) => { $('capState').textContent = m; };
 engine.onResult = (r) => {
   quiet = !r.best;
   if (r.best) {
@@ -395,7 +420,7 @@ function wireAmbient(tagErr: string) {
     $('ambDetail').textContent =
       `背景音量 ${st.floorDb.toFixed(0)} dB（已校正）・音量起伏 ${st.fluct.toFixed(0)} dB` +
       (p ? `・說話 ${(p.speech * 100).toFixed(0)}%・人群 ${(p.crowd * 100).toFixed(0)}%・音樂 ${(p.music * 100).toFixed(0)}%・車聲 ${(p.traffic * 100).toFixed(0)}%` : '');
-    if (st.scene.includes('有音樂')) $('capStatus').textContent = '環境有音樂，字幕可能比較不準';
+    if (st.scene.includes('有音樂') && !st.alert) $('ambAdvice').textContent += '（有音樂，字幕可能比較不準）';
     render();
   };
   ambient.onAlert = (label) => {

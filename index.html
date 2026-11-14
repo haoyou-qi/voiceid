@@ -68,10 +68,15 @@
           <button id="clearCap">清除字幕</button>
         </div>
         <label class="switch">
+          <input type="checkbox" id="capOnly" />
+          <b>只開字幕</b>（不做聲紋和環境偵測；手機字幕出不來時試試這個）
+        </label>
+        <label class="switch">
           <input type="checkbox" id="filterStrangers" checked />
           <b>只顯示認識的人</b>（陌生人說的話不出現在字幕上；需要聽陌生人時關掉）
         </label>
         <p class="hint">字幕用 Chrome / Edge 內建語音辨識（需要網路，語音會送到瀏覽器廠商伺服器）。它固定用瀏覽器的「預設麥克風」。</p>
+        <div id="capState" class="hint">字幕狀態：尚未開始</div>
         <div id="capStatus" class="hint warn"></div>
         <div id="transcript" class="transcript"></div>
       </section>

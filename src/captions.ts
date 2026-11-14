@@ -28,6 +28,10 @@ export class Captions {
   liveAttribute: (startMs: number, endMs: number) => Attribution = () => ({ speaker: null, stranger: false, drop: false });
   onChange: () => void = () => {};
   onError: (msg: string) => void = () => {};
+  /** 字幕目前狀態（給畫面顯示，方便判斷問題出在哪） */
+  onStatus: (msg: string) => void = () => {};
+  private gotResult = false;
+  private ends: number[] = []; // 最近幾次自動結束的時間
 
   private rec: SR | null = null;
   private running = false;
@@ -49,11 +53,16 @@ export class Captions {
       return;
     }
     this.running = true;
+    this.gotResult = false;
+    this.ends = [];
+    this.onError('');
+    this.onStatus('字幕狀態：啟動中…');
     this.spawn();
   }
 
   stop() {
     this.running = false;
+    this.onStatus('字幕狀態：已停止');
     try { this.rec?.stop(); } catch { /* 已停止 */ }
     this.rec = null;
     if (this.interim) this.commit(this.interim);
@@ -74,7 +83,9 @@ export class Captions {
     rec.lang = this.lang;
     rec.continuous = true;
     rec.interimResults = true;
+    rec.onstart = () => this.onStatus(this.gotResult ? '字幕狀態：聆聽中' : '字幕狀態：聆聽中（請說話，還沒收到任何文字）');
     rec.onresult = (e: any) => {
+      if (!this.gotResult) { this.gotResult = true; this.onStatus('字幕狀態：聆聽中'); }
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
@@ -102,6 +113,15 @@ export class Captions {
     };
     // Chrome 講完一段或安靜太久會自己停，聆聽中就自動重開
     rec.onend = () => {
+      // 一直被系統中斷又沒有任何文字 → 多半是 iPhone 不讓兩個功能同時用麥克風
+      const now = Date.now();
+      this.ends = this.ends.filter((t) => now - t < 15_000).concat(now);
+      if (this.running && !this.gotResult && this.ends.length >= 5) {
+        this.onError('字幕一直被系統中斷、收不到文字：這支手機可能不允許「字幕」和「聲紋 / 環境偵測」同時使用麥克風');
+        this.onStatus('字幕狀態：被系統中斷（已重試 5 次）');
+        this.running = false;
+        return;
+      }
       if (this.running) setTimeout(() => this.running && this.spawn(), 250);
     };
     try {
@@ -109,6 +129,7 @@ export class Captions {
       this.rec = rec;
     } catch (e) {
       this.onError(`字幕無法啟動：${(e as Error).message}`);
+      this.onStatus('字幕狀態：無法啟動');
     }
   }
 
