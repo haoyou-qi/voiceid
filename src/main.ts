@@ -1,5 +1,6 @@
 declare const __BUILD__: string; // 打包時填入（用來確認手機拿到的是不是新版）
 import './style.css';
+import { requirePasscode } from './passcode';
 import { VoiceIdEngine } from './dsp/engine';
 import { CamppBackend, loadCamppEmbedder } from './dsp/campp';
 import { GmmBackend } from './dsp/speaker';
@@ -586,6 +587,7 @@ async function setupCaptionEngine() {
 // ---------- 啟動 ----------
 async function boot() {
   $('ver').textContent = `版本 ${__BUILD__}`;
+  await requirePasscode(); // 通行碼正確才開始下載模型
   $('platform').textContent = '載入聲紋模型中…';
   // 優先用 CAM++ 深度模型；載入失敗（沒下載模型、舊瀏覽器）就改用 GMM 備援
   let modelError = '';
