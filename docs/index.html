@@ -14,7 +14,7 @@
     <title>聲紋辨識 VoiceID</title>
     <!-- ONNX Runtime（跑 CAM++ 聲紋模型）。檔案由 install.bat 複製到 public/ort/ -->
     <script src="./ort/ort.min.js"></script>
-    <link rel="stylesheet" href="./assets/main.css?v=5e769d57" />
+    <link rel="stylesheet" href="./assets/main.css?v=5ad686c1" />
   </head>
   <body>
     <main>
@@ -26,7 +26,7 @@
 
       <section>
         <h2>眼鏡畫面預覽</h2>
-        <pre id="glasses" class="glasses">載入中…</pre>
+        <div class="glass-wrap"><pre id="glasses" class="glasses">載入中…</pre></div>
         <div class="row">
           <label>音源
             <select id="source"></select>
@@ -113,6 +113,6 @@
         </label>
       </section>
     </main>
-    <script type="module" src="./assets/main.js?v=5e769d57"></script>
+    <script type="module" src="./assets/main.js?v=5ad686c1"></script>
   </body>
 </html>

@@ -63,3 +63,12 @@ td.best { font-weight: 600; color: var(--accent); }
 /* iPhone 瀏海 / 底部橫條留白 */
 main { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); padding-bottom: max(16px, env(safe-area-inset-bottom)); padding-top: max(16px, env(safe-area-inset-top)); }
 button, select, input { min-height: 40px; } /* 手指好點 */
+
+/* 眼鏡預覽：模擬 576×288 的畫面，每行 24 個中文字、7 行；字體跟著寬度縮放 */
+.glass-wrap { container-type: inline-size; }
+.glasses {
+  white-space: pre; overflow: hidden;
+  font-size: calc((100cqw - 24px) / 25);
+  line-height: 1.32;
+  display: block;
+}

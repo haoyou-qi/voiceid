@@ -17,7 +17,6 @@ const STORE_KEY = 'voiceid.profiles.v1';
 const SETTINGS_KEY = 'voiceid.settings.v2.'; // 後面接引擎種類
 const MIC_KEY = 'voiceid.mic.v1';
 const FILTER_KEY = 'voiceid.filterStrangers.v1';
-const CAP_CHARS = 24; // 眼鏡每行字幕最多顯示幾個字（576px 寬）
 
 let engine: VoiceIdEngine;
 let platform: Platform;
@@ -82,26 +81,45 @@ function bar(v: number, n = 10) {
   return '[' + '#'.repeat(k) + '-'.repeat(n - k) + ']';
 }
 
-/** 眼鏡上的字幕：最近幾句 + 正在說的句子，每行只留最後 CAP_CHARS 個字 */
-function captionLines(max: number): string[] {
-  const fmt = (who: string | null, text: string) => {
-    const head = who ? `${who}：` : '';
-    const room = Math.max(6, CAP_CHARS - head.length);
-    return head + (text.length > room ? '…' + text.slice(-room + 1) : text);
-  };
-  const out = captions.lines.slice(-max).map((l) => fmt(whoLabel(l.speaker, l.stranger), l.text));
-  if (captions.interim) {
-    const a = captions.interimAttribution();
-    if (!a.drop) out.push(fmt(whoLabel(a.speaker, a.stranger), captions.interim + '…'));
+// ---------- 眼鏡排版 ----------
+// G2 畫面 576×288：每行約 24 個中文字寬、最多 7 行。自己斷行，最新的字永遠在最下面，舊的從上面捲掉。
+const GLASS_COLS = 24;
+const GLASS_ROWS = 7;
+
+/** 字寬：中文 / 全形 = 1，英數半形 = 0.5 */
+const charW = (c: string) => (c.charCodeAt(0) < 0x2e80 ? 0.5 : 1);
+const widthOf = (t: string) => [...t].reduce((a, c) => a + charW(c), 0);
+
+/** 依眼鏡寬度斷行 */
+function wrap(t: string, cols = GLASS_COLS): string[] {
+  const out: string[] = [];
+  let line = '', w = 0;
+  for (const c of t) {
+    if (w + charW(c) > cols) { out.push(line); line = ''; w = 0; }
+    line += c; w += charW(c);
   }
-  if (!out.length) out.push(captionSupported() ? '（等待說話…）' : '（此音源沒有字幕）');
-  return out.slice(-max);
+  out.push(line);
+  return out;
 }
 
-function captionSupported() {
-  // 本機辨識：任何音源都能用（眼鏡、手機、電腦、分頁）；瀏覽器內建：只能用瀏覽器自己的麥克風
-  if (captionEngine === 'local') return !!asr;
-  return platform?.kind === 'browser' && source === 'browser' && Captions.supported();
+/** 太長就截斷（標題列、環境列用，不換行） */
+const clip = (t: string, cols = GLASS_COLS) => {
+  if (widthOf(t) <= cols) return t;
+  let out = '', w = 0;
+  for (const c of t) { if (w + charW(c) > cols - 1) break; out += c; w += charW(c); }
+  return out + '…';
+};
+
+/** 眼鏡上的字幕：最近幾句 + 正在說的句子，斷行後只留最後 rows 行 */
+function captionLines(rows: number): string[] {
+  const fmt = (who: string, text: string) => (who ? `${who}：` : '') + text;
+  const sentences = captions.lines.slice(-6).map((l) => fmt(whoLabel(l.speaker, l.stranger), l.text));
+  if (captions.interim) {
+    const a = captions.interimAttribution();
+    if (!a.drop) sentences.push(fmt(whoLabel(a.speaker, a.stranger), captions.interim + '…'));
+  }
+  if (!sentences.length) sentences.push(captionSupported() ? '（等待說話…）' : '（此音源沒有字幕）');
+  return sentences.flatMap((t) => wrap(t)).slice(-rows);
 }
 
 function glassesText(): string {
@@ -115,20 +133,26 @@ function glassesText(): string {
   } else if (capOnlyOn) {
     lines[0] = 'VoiceID 只開字幕';
     lines.pop();
-    lines.push(...captionLines(6));
+    lines.push(...captionLines(GLASS_ROWS - 1));
   } else if (!micOn) {
     lines.push(engine.usable().length ? '  單擊：開始聆聽' : '  尚未建立聲紋檔（仍可看字幕）');
     lines.push('');
     lines.push('單擊 開始/暫停   雙擊 離開');
   } else {
-    const who = !engine.usable().length ? '' : quiet ? '' : `> ${current ?? '辨識中'} ${bar(lastConf, 6)}`;
-    lines[0] = `VoiceID 聆聽中${filterStrangers ? '[濾]' : ''}  ${who}`;
-    lines.pop(); // 字幕模式不留空行，畫面給字幕用
-    lines.push(ambientLine());
-    lines.push(...captionLines(4));
+    // 標題列：精簡成一行（聆聽狀態 + 現在說話的人 + 信心條）
+    const who = !engine.usable().length || quiet ? '' : ` > ${current ?? '辨識中'} ${bar(lastConf, 5)}`;
+    lines[0] = clip(`聆聽中${filterStrangers ? '[濾]' : ''}${who}`);
+    lines[1] = clip(ambientLine());
+    lines.push(...captionLines(GLASS_ROWS - 2));
   }
   return lines.join('\n');
 }
+function captionSupported() {
+  // 本機辨識：任何音源都能用（眼鏡、手機、電腦、分頁）；瀏覽器內建：只能用瀏覽器自己的麥克風
+  if (captionEngine === 'local') return !!asr;
+  return platform?.kind === 'browser' && source === 'browser' && Captions.supported();
+}
+
 
 let renderTimer: number | null = null;
 function render() {
@@ -476,10 +500,15 @@ async function setupCaptionEngine() {
   captionEngine = saved === 'local' || saved === 'browser'
     ? (saved as 'local' | 'browser')
     : asr && (isPhoneOrGlasses || !Captions.supported()) ? 'local' : Captions.supported() ? 'browser' : 'local';
+  // iPhone / iPad 的瀏覽器內建語音辨識實測沒有作用（Safari、Chrome 都一樣）→ 一律用本機辨識
+  const isApple = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (isApple && asr) captionEngine = 'local';
   if (captionEngine === 'local' && !asr) captionEngine = 'browser';
   sel.value = captionEngine;
   (sel.querySelector('option[value="local"]') as HTMLOptionElement).disabled = !asr;
-  (sel.querySelector('option[value="browser"]') as HTMLOptionElement).disabled = !Captions.supported() || platform.kind === 'even';
+  const browserOpt = sel.querySelector('option[value="browser"]') as HTMLOptionElement;
+  browserOpt.disabled = !Captions.supported() || platform.kind === 'even' || isApple;
+  if (isApple) browserOpt.textContent = '瀏覽器內建（iPhone 不支援）';
   if (asrErr) $('capStatus').textContent = `本機辨識模型沒有載入（${asrErr}）`;
   sel.onchange = () => {
     captionEngine = sel.value as 'local' | 'browser';
@@ -518,6 +547,7 @@ async function boot() {
   if (engine.profiles.some((p) => p.kind !== engine.backend.kind))
     $('enrollStatus').textContent = '辨識引擎已升級：標示「舊格式」的聲紋檔請刪除後重新建檔。';
 
+  if (/iPhone|iPad|Android/i.test(navigator.userAgent)) SOURCE_LABEL.browser = '手機麥克風';
   const sel = $<HTMLSelectElement>('source');
   sel.innerHTML = platform.sources.map((s) => `<option value="${s}">${SOURCE_LABEL[s]}</option>`).join('');
   sel.onchange = () => {
