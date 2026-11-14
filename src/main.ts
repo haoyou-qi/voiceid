@@ -4,6 +4,7 @@ import { CamppBackend, loadCamppEmbedder } from './dsp/campp';
 import { GmmBackend } from './dsp/speaker';
 import { AmbientMonitor, loadCedTagger, type AmbientState } from './dsp/ambient';
 import { pcm16ToFloat } from './dsp/features';
+import { StreamingAsr } from './dsp/asr';
 import type { Profile } from './dsp/types';
 import { fromSentence, voteFrom, type TimelineItem } from './attribution';
 import { Captions, type Attribution } from './captions';
@@ -28,6 +29,10 @@ let quiet = true;
 let current: string | null = null; // 目前畫面上顯示的說話者
 let micId = '';
 let capOnlyOn = false; // 「只開字幕」模式進行中
+let asr: StreamingAsr | null = null; // 本機語音辨識
+let asrOn = false;
+let captionEngine: 'local' | 'browser' = 'local';
+const CAP_ENGINE_KEY = 'voiceid.capEngine.v1';
 const CALIB_KEY = 'voiceid.ambientCalib.v1';
 let ambient: AmbientMonitor = new AmbientMonitor(null);
 let amb: AmbientState | null = null; // 最新的環境狀態
@@ -94,6 +99,8 @@ function captionLines(max: number): string[] {
 }
 
 function captionSupported() {
+  // 本機辨識：任何音源都能用（眼鏡、手機、電腦、分頁）；瀏覽器內建：只能用瀏覽器自己的麥克風
+  if (captionEngine === 'local') return !!asr;
   return platform?.kind === 'browser' && source === 'browser' && Captions.supported();
 }
 
@@ -154,6 +161,7 @@ document.addEventListener('visibilitychange', () => {
 function feed(f: Float32Array) {
   engine.pushFloat(f);
   if (engine.mode === 'listening') ambient.push(f);
+  if (asrOn) asr?.push(f); // 本機字幕跟聲紋、環境偵測共用同一份音訊
 }
 
 /** 眼鏡第二行：環境狀態（有警報時改成醒目提示） */
@@ -187,44 +195,49 @@ async function stopMic() {
 
 async function toggleListening() {
   if (engine.mode === 'enrolling') return;
-  if (capOnlyOn) {
-    capOnlyOn = false;
-    captions.stop();
-    void keepAwake(false);
-  } else if (micOn) {
+  if (capOnlyOn || micOn) {
+    // 停止
     engine.stop();
+    asrOn = false;
+    asr?.flush();
     captions.stop();
-    await stopMic();
+    capOnlyOn = false;
+    void keepAwake(false);
+    if (micOn) await stopMic();
   } else {
-    if (!engine.usable().length && !captionSupported()) return alert('請先建立至少一個聲紋檔');
+    const capOnly = $<HTMLInputElement>('capOnly').checked;
+    if (capOnly && !captionSupported()) {
+      $('capStatus').textContent = '目前的字幕引擎在這裡不能用，「只開字幕」無法使用；請把字幕引擎改成「手機本機辨識」';
+      return;
+    }
+    if (!capOnly && !engine.usable().length && !captionSupported()) return alert('請先建立至少一個聲紋檔');
     const mismatch = engine.usable().filter((p) => p.source !== source).map((p) => p.name);
     if (mismatch.length) console.warn(`這些聲紋檔是用其他音源建的，準確度可能下降：${mismatch.join('、')}`);
     history.length = 0;
     quiet = true;
     current = null;
     timeline.length = 0;
-    engine.startListening();
     ambient.reset();
     amb = null;
-    // iPhone：語音辨識一定要在「按下按鈕」的當下啟動，所以要在等麥克風之前先開字幕
-    const capOnly = $<HTMLInputElement>('capOnly').checked;
-    if (capOnly && !captionSupported()) {
-      $('capStatus').textContent = '這個瀏覽器不支援即時字幕，「只開字幕」無法使用';
-      return;
-    }
-    if (captionSupported()) captions.start();
-    else
-      $('capStatus').textContent = !Captions.supported()
-        ? '這個瀏覽器（或加入主畫面的模式）不支援即時字幕；iPhone 請改用 Safari 直接開網址試試'
-        : '字幕只支援麥克風音源；目前只做說話者辨識';
-    if (capOnly) {
-      // 只開字幕：不占用麥克風，讓語音辨識獨占（iPhone 相容）
-      engine.stop();
-      capOnlyOn = true;
-      void keepAwake(true);
+    if (capOnly) engine.stop();
+    else engine.startListening();
+    // 字幕：瀏覽器內建的語音辨識（iPhone）一定要在「按下按鈕」的當下啟動，所以要在等麥克風之前先開
+    if (captionSupported()) {
+      captions.mode = captionEngine === 'local' ? 'local' : 'web';
+      captions.start();
+      if (captionEngine === 'local' && asr) {
+        asr.reset();
+        asrOn = true;
+      }
     } else {
-      await startMic();
+      $('capStatus').textContent = captionEngine === 'browser' && !Captions.supported()
+        ? '這個瀏覽器不支援內建字幕；請把字幕引擎改成「手機本機辨識」'
+        : '目前的字幕引擎只支援麥克風音源；目前只做說話者辨識';
     }
+    const needMic = !capOnly || captionEngine === 'local';
+    if (capOnly) capOnlyOn = true;
+    if (needMic) await startMic();
+    else void keepAwake(true); // 只開瀏覽器內建字幕：不占用麥克風，讓它獨占
   }
   updateButtons();
   render();
@@ -315,6 +328,7 @@ function updateButtons() {
   enroll.className = enrolling ? 'rec' : '';
   $<HTMLSelectElement>('source').disabled = micOn || capOnlyOn;
   $<HTMLInputElement>('capOnly').disabled = micOn || capOnlyOn;
+  $<HTMLSelectElement>('capEngine').disabled = micOn || capOnlyOn;
 }
 
 async function refreshMics() {
@@ -442,6 +456,37 @@ function wireAmbient(tagErr: string) {
   };
 }
 
+// ---------- 字幕引擎 ----------
+async function setupCaptionEngine() {
+  const sel = $<HTMLSelectElement>('capEngine');
+  let asrErr = '';
+  try {
+    asr = await StreamingAsr.load();
+    asr.onPartial = (t) => captions.localPartial(t);
+    asr.onFinal = (t) => captions.localFinal(t);
+    asr.onLag = (sec) => { $('capStatus').textContent = `手機處理速度跟不上（落後 ${sec.toFixed(1)} 秒），字幕會延遲`; };
+  } catch (e) {
+    asrErr = (e as Error).message ?? String(e);
+    console.warn('本機語音辨識模型載入失敗：', e);
+  }
+  const isPhoneOrGlasses = platform.kind === 'even' || /iPhone|iPad|Android/i.test(navigator.userAgent);
+  let saved = '';
+  try { saved = localStorage.getItem(CAP_ENGINE_KEY) || ''; } catch { /* 略過 */ }
+  // 預設：手機 / 眼鏡用本機辨識；電腦上 Chrome 內建的比較準
+  captionEngine = saved === 'local' || saved === 'browser'
+    ? (saved as 'local' | 'browser')
+    : asr && (isPhoneOrGlasses || !Captions.supported()) ? 'local' : Captions.supported() ? 'browser' : 'local';
+  if (captionEngine === 'local' && !asr) captionEngine = 'browser';
+  sel.value = captionEngine;
+  (sel.querySelector('option[value="local"]') as HTMLOptionElement).disabled = !asr;
+  (sel.querySelector('option[value="browser"]') as HTMLOptionElement).disabled = !Captions.supported() || platform.kind === 'even';
+  if (asrErr) $('capStatus').textContent = `本機辨識模型沒有載入（${asrErr}）`;
+  sel.onchange = () => {
+    captionEngine = sel.value as 'local' | 'browser';
+    try { localStorage.setItem(CAP_ENGINE_KEY, captionEngine); } catch { /* 略過 */ }
+  };
+}
+
 // ---------- 啟動 ----------
 async function boot() {
   $('platform').textContent = '載入聲紋模型中…';
@@ -468,6 +513,7 @@ async function boot() {
   platform = await detectPlatform('VoiceID 啟動中…');
   source = platform.sources[0];
   $('platform').textContent = (platform.kind === 'even' ? 'Even Hub 模式' : '瀏覽器模式') + ' · ' + engine.backend.label;
+  await setupCaptionEngine(); // 要在知道平台（手機 / 眼鏡 / 電腦）之後才能決定預設字幕引擎
   $('engineNote').textContent = modelError ? `CAM++ 模型沒有載入（${modelError}），目前用備援方法，準確度較低。請重新執行 install.bat。` : '';
   if (engine.profiles.some((p) => p.kind !== engine.backend.kind))
     $('enrollStatus').textContent = '辨識引擎已升級：標示「舊格式」的聲紋檔請刪除後重新建檔。';

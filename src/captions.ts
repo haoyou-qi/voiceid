@@ -22,6 +22,8 @@ export class Captions {
   lines: CaptionLine[] = []; // 已確定的句子
   interim = ''; // 正在說、還沒確定的句子
   lang = 'zh-TW';
+  /** web = 瀏覽器內建語音辨識；local = 本機模型（由外部餵 localPartial / localFinal） */
+  mode: 'web' | 'local' = 'web';
   /** 一句話說完後，依時間範圍（毫秒時間戳）決定是誰說的（整句聲紋判斷，非同步） */
   attribute: (startMs: number, endMs: number) => Promise<Attribution> = async () => ({ speaker: null, stranger: false, drop: false });
   /** 正在說的句子用的快速判斷（同步，給即時顯示） */
@@ -37,6 +39,23 @@ export class Captions {
   private running = false;
   private segStart = 0; // 目前這句話開始的時間
   private commitQueue: Promise<void> = Promise.resolve(); // 整句判斷是非同步的，用佇列維持字幕順序
+
+  /** 本機辨識：正在說的句子更新 */
+  localPartial(text: string) {
+    if (!this.running) return;
+    if (!this.segStart) this.segStart = Date.now() - 800; // 辨識出第一個字時，人大約已經說了快 1 秒
+    if (!this.gotResult) { this.gotResult = true; this.onStatus('字幕狀態：本機辨識聆聽中（不需網路）'); }
+    this.interim = text;
+    this.onChange();
+  }
+
+  /** 本機辨識：一句話結束 */
+  localFinal(text: string) {
+    if (!this.running && !text) return;
+    this.interim = '';
+    if (text) this.commit(text);
+    this.onChange();
+  }
 
   /** 正在說的這句話目前的歸屬（給畫面顯示用） */
   interimAttribution(): Attribution {
@@ -56,6 +75,10 @@ export class Captions {
     this.gotResult = false;
     this.ends = [];
     this.onError('');
+    if (this.mode === 'local') {
+      this.onStatus('字幕狀態：本機辨識聆聽中（不需網路）');
+      return;
+    }
     this.onStatus('字幕狀態：啟動中…');
     this.spawn();
   }
@@ -133,7 +156,7 @@ export class Captions {
     }
   }
 
-  private commit(text: string) {
+  commit(text: string) {
     const now = Date.now();
     // 沒抓到開始時間（辨識直接給最終結果）→ 用字數估計長度（中文大約每秒 4 個字）
     const start = this.segStart || now - Math.max(1000, text.length * 250);
