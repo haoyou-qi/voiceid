@@ -1,0 +1,13 @@
+{
+  "package_id": "com.wanda.voiceid",
+  "name": "VoiceID",
+  "version": "0.1.0",
+  "edition": "202601",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    { "name": "g2-microphone", "desc": "用眼鏡麥克風收音，辨識目前是誰在說話。音訊只在手機上即時處理，不會上傳。" },
+    { "name": "phone-microphone", "desc": "用手機麥克風收音，建立聲紋檔並辨識說話者。音訊只在手機上即時處理，不會上傳。" }
+  ],
+  "supported_languages": ["zh", "en"]
+}
