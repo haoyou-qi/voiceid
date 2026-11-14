@@ -620,6 +620,16 @@ async function boot() {
   const langSel = $<HTMLSelectElement>('lang');
   langSel.onchange = () => { captions.lang = langSel.value; };
   $('clearCap').onclick = () => captions.clear();
+  // 字幕字體大小（記住設定）
+  const capSize = $<HTMLInputElement>('capSize');
+  try { capSize.value = localStorage.getItem('voiceid.capSize.v1') || '22'; } catch { /* 略過 */ }
+  const applySize = () => {
+    $('transcript').style.setProperty('--cap-size', `${capSize.value}px`);
+    $('capSizeVal').textContent = `${capSize.value}px`;
+    try { localStorage.setItem('voiceid.capSize.v1', capSize.value); } catch { /* 略過 */ }
+  };
+  capSize.oninput = applySize;
+  applySize();
   const filt = $<HTMLInputElement>('filterStrangers');
   try { filterStrangers = localStorage.getItem(FILTER_KEY) !== '0'; } catch { /* 略過 */ }
   filt.checked = filterStrangers;

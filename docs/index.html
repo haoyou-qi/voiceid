@@ -14,7 +14,7 @@
     <title>聲紋辨識 VoiceID</title>
     <!-- ONNX Runtime（跑 CAM++ 聲紋模型）。檔案由 install.bat 複製到 public/ort/ -->
     <script src="./ort/ort.min.js"></script>
-    <link rel="stylesheet" href="./assets/main.css?v=ee695e34" />
+    <link rel="stylesheet" href="./assets/main.css?v=4066e9b7" />
   </head>
   <body>
     <main>
@@ -98,6 +98,9 @@
         <p class="hint">「手機本機辨識」在手機上跑語音辨識模型，音訊不上傳，跟聲紋、環境偵測共用麥克風，眼鏡也能用。「中英夾雜」可以辨識一句話裡混用的中英文；「純中文」比較小、比較省電，但英文會辨識錯。「瀏覽器內建」用 Chrome / Edge 的辨識，比較準、可中英夾雜，但需要網路、語音會上傳，而且只能用電腦麥克風。</p>
         <div id="capState" class="hint">字幕狀態：尚未開始</div>
         <div id="capStatus" class="hint warn"></div>
+        <label>字幕大小：<b id="capSizeVal"></b>
+          <input id="capSize" type="range" min="14" max="40" step="2" value="22" />
+        </label>
         <div id="transcript" class="transcript"></div>
       </section>
 
@@ -124,6 +127,6 @@
         </label>
       </section>
     </main>
-    <script type="module" src="./assets/main.js?v=ee695e34"></script>
+    <script type="module" src="./assets/main.js?v=4066e9b7"></script>
   </body>
 </html>

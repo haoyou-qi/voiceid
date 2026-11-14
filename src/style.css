@@ -72,3 +72,8 @@ button, select, input { min-height: 40px; } /* 手指好點 */
   line-height: 1.32;
   display: block;
 }
+
+/* 即時字幕：字可以調大，最新的一句最明顯 */
+.transcript { font-size: var(--cap-size, 22px); line-height: 1.5; max-height: 60vh; }
+.transcript div { padding: 4px 0; border-bottom: 1px solid var(--line); }
+.transcript div:last-child { font-weight: 600; }
