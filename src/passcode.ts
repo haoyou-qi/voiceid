@@ -2,7 +2,7 @@
 // 注意：網站是公開的靜態網頁，這只能擋一般人，懂程式的人仍可繞過。
 // 網頁裡只存「加鹽、反覆雜湊 200,000 次」的結果，看不到明碼，也讓暴力破解變慢。
 
-const PASS = { salt: '291vn2mldoH5XIFfJxM4sA==', iter: 200000, hash: '+sKnLpEelrpMDIhJtptkufxOyiDlRjlVz54gmpo2wQA=' };
+const PASS = { salt: 'uWDxfN7Y338++dJssIYfIQ==', iter: 200000, hash: 's2KgTRtiefrVdaw5aygAUHRUNA7JXCDcZOMuuc6LX2Q=' };
 const KEY = 'voiceid.pass.v1';
 
 const b64 = (buf: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(buf)));
