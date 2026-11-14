@@ -116,3 +116,40 @@ if (existsSync(join(ASR_DIR, 'encoder.int8.onnx')) && statSync(join(ASR_DIR, 'en
     try { rmSync(work, { recursive: true, force: true }); } catch { /* 略過 */ }
   }
 }
+
+// 5. 中英夾雜語音辨識模型（small bilingual zh-en；編碼器 int8 + 解碼器 / joiner 不量化，約 70MB）
+//    壓縮檔很大（約 460MB，裡面有好幾種版本），只解出需要的檔案
+const ZHEN_URL =
+  'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16.tar.bz2';
+const ZHEN_DIR = join(root, 'public', 'models', 'asr-zhen');
+mkdirSync(ZHEN_DIR, { recursive: true });
+for (const f of ['asr_config.json', 's2t.json']) copyFileSync(join(root, 'models-src', 'asr-zhen', f), join(ZHEN_DIR, f));
+if (existsSync(join(ZHEN_DIR, 'encoder.int8.onnx')) && statSync(join(ZHEN_DIR, 'encoder.int8.onnx')).size > 40_000_000) {
+  console.log('[setup] 中英夾雜模型已存在，略過下載');
+} else {
+  console.log('[setup] 下載中英夾雜語音辨識模型（壓縮檔約 460MB，請耐心等候）…');
+  const work = join(tmpdir(), 'voiceid-zhen-' + Date.now());
+  try {
+    mkdirSync(work, { recursive: true });
+    const res = await fetch(ZHEN_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const archive = join(work, 'zhen.tar.bz2');
+    writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
+    const d = 'sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16';
+    const want = ['encoder-epoch-99-avg-1.int8.onnx', 'decoder-epoch-99-avg-1.onnx', 'joiner-epoch-99-avg-1.onnx', 'tokens.txt'];
+    const r = spawnSync('tar', ['-xjf', archive, '-C', work, ...want.map((f) => `${d}/${f}`)], { stdio: 'inherit' });
+    if (r.status !== 0) throw new Error('解壓縮失敗（找不到 tar 指令？）');
+    for (const [from, to] of [
+      [want[0], 'encoder.int8.onnx'],
+      [want[1], 'decoder.onnx'],
+      [want[2], 'joiner.onnx'],
+      [want[3], 'tokens.txt'],
+    ]) copyFileSync(join(work, d, from), join(ZHEN_DIR, to));
+    console.log('[setup] 中英夾雜模型完成');
+  } catch (e) {
+    console.error(`[setup] 中英夾雜模型下載失敗：${e.message}`);
+    console.error('        沒有這個模型時，字幕語言請選「純中文」。');
+  } finally {
+    try { rmSync(work, { recursive: true, force: true }); } catch { /* 略過 */ }
+  }
+}

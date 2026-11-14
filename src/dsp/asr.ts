@@ -1,4 +1,6 @@
-// 本機串流語音辨識（中文）：sherpa-onnx streaming zipformer 14M（int8，約 25MB）
+// 本機串流語音辨識：sherpa-onnx streaming zipformer
+//   - 中英夾雜：small bilingual zh-en（編碼器 int8 + 解碼器 / joiner 不量化，約 70MB；量化解碼器會讓中文大量漏字）
+//   - 純中文：zh-14M（int8，約 25MB，比較省電）
 // 全部在手機 / 瀏覽器上用 onnxruntime-web 推論，不上傳、不需要網路；
 // 跟聲紋、環境偵測共用同一份 16kHz 音訊，所以 iPhone 和 G2 眼鏡的麥克風都能用。
 
@@ -6,7 +8,11 @@ import { AsrFbankStream } from './fbank';
 import { getOrt, runExclusive } from './ort';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-export const ASR_BASE = './models/asr/';
+export const ASR_MODELS = {
+  zhen: { base: './models/asr-zhen/', label: '中英夾雜' },
+  zh: { base: './models/asr/', label: '純中文' },
+} as const;
+export type AsrModelId = keyof typeof ASR_MODELS;
 
 interface AsrConfig {
   T: number; // 每次送進編碼器的 frame 數（含前瞻）
@@ -14,6 +20,7 @@ interface AsrConfig {
   contextSize: number;
   blank: number;
   states: { name: string; shape: number[]; type: 'float32' | 'int64' }[];
+  files?: { encoder: string; decoder: string; joiner: string };
 }
 
 interface S2T {
@@ -48,6 +55,8 @@ export class StreamingAsr {
   onLag: (sec: number) => void = () => {};
 
   endpointSec = 1.0; // 停頓多久算一句結束
+  /** 斷句時是否也把編碼器記憶歸零（true：換語言比較不會漏字；false：句子中間停頓後比較不會漏字） */
+  resetEncoderOnEndpoint = true;
   maxSentenceSec = 15; // 一句話最長多久就強制斷句
 
   private fb = new AsrFbankStream();
@@ -71,14 +80,18 @@ export class StreamingAsr {
     private toTw: (s: string) => string,
   ) {}
 
-  static async load(base = ASR_BASE): Promise<StreamingAsr> {
+  static async load(base: string = ASR_MODELS.zhen.base): Promise<StreamingAsr> {
     const ort = getOrt();
     const opt = { executionProviders: ['wasm'] };
-    const [enc, dec, joi, cfg, tokTxt, s2t] = await Promise.all([
-      ort.InferenceSession.create(base + 'encoder.int8.onnx', opt),
-      ort.InferenceSession.create(base + 'decoder.int8.onnx', opt),
-      ort.InferenceSession.create(base + 'joiner.int8.onnx', opt),
-      fetch(base + 'asr_config.json').then((r) => r.json()),
+    const cfg: AsrConfig = await fetch(base + 'asr_config.json').then((r) => {
+      if (!r.ok) throw new Error(`找不到模型設定（${r.status}）`);
+      return r.json();
+    });
+    const files = cfg.files ?? { encoder: 'encoder.int8.onnx', decoder: 'decoder.int8.onnx', joiner: 'joiner.int8.onnx' };
+    const [enc, dec, joi, tokTxt, s2t] = await Promise.all([
+      ort.InferenceSession.create(base + files.encoder, opt),
+      ort.InferenceSession.create(base + files.decoder, opt),
+      ort.InferenceSession.create(base + files.joiner, opt),
       fetch(base + 'tokens.txt').then((r) => r.text()),
       fetch(base + 's2t.json').then((r) => r.json()),
     ]);
@@ -96,6 +109,17 @@ export class StreamingAsr {
   reset() {
     this.fb.reset();
     this.frames = [];
+    this.resetStates();
+    this.hyp = new Array(this.cfg.contextSize).fill(this.cfg.blank);
+    this.seg = [];
+    this.decOut = null;
+    this.trailingBlank = 0;
+    this.segSec = 0;
+    this.pendingSamples = 0;
+  }
+
+  /** 編碼器的記憶歸零 */
+  private resetStates() {
     this.states = {};
     for (const s of this.cfg.states) {
       const n = s.shape.reduce((a, b) => a * b, 1);
@@ -104,12 +128,6 @@ export class StreamingAsr {
           ? new this.ort.Tensor('int64', new BigInt64Array(n), s.shape)
           : new this.ort.Tensor('float32', new Float32Array(n), s.shape);
     }
-    this.hyp = new Array(this.cfg.contextSize).fill(this.cfg.blank);
-    this.seg = [];
-    this.decOut = null;
-    this.trailingBlank = 0;
-    this.segSec = 0;
-    this.pendingSamples = 0;
   }
 
   /** 餵 16kHz 音訊（任意長度） */
@@ -181,8 +199,23 @@ export class StreamingAsr {
     else if (!this.seg.length) this.segSec = 0;
   }
 
+  /** 把辨識出的 token 接成句子：中文直接接；英文 ▁ 開頭代表新單字（前面加空格），一律小寫；中英文之間加空格 */
   private text() {
-    return this.toTw(this.seg.map((k) => this.tokens[k] ?? '').join(''));
+    let out = '';
+    for (const k of this.seg) {
+      let t = this.tokens[k] ?? '';
+      if (!t || t.startsWith('<')) continue; // <unk> 之類的特殊符號
+      if (t.startsWith('▁')) {
+        t = t.slice(1).toLowerCase();
+        out += (out && !out.endsWith(' ') ? ' ' : '') + t;
+      } else if (/^[\x00-\x7f]+$/.test(t)) {
+        out += t.toLowerCase(); // 英文單字的後半段
+      } else {
+        if (/[a-z0-9]$/i.test(out)) out += ' '; // 英文後面接中文：加空格
+        out += t;
+      }
+    }
+    return this.toTw(out.trim());
   }
 
   private endSentence() {
@@ -191,6 +224,11 @@ export class StreamingAsr {
     this.seg = [];
     this.segSec = 0;
     this.trailingBlank = 0;
+    // 一句話結束（已停頓 1 秒）就把解碼器上下文和編碼器記憶都歸零，每句話獨立辨識：
+    // 否則前一句是中文時，下一句英文的開頭會被忽略（模型卡在中文模式）
+    this.hyp = new Array(this.cfg.contextSize).fill(this.cfg.blank);
+    this.decOut = null;
+    if (this.resetEncoderOnEndpoint) this.resetStates();
     this.onFinal(t);
   }
 }

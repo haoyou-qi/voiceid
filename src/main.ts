@@ -4,7 +4,7 @@ import { CamppBackend, loadCamppEmbedder } from './dsp/campp';
 import { GmmBackend } from './dsp/speaker';
 import { AmbientMonitor, loadCedTagger, type AmbientState } from './dsp/ambient';
 import { pcm16ToFloat } from './dsp/features';
-import { StreamingAsr } from './dsp/asr';
+import { ASR_MODELS, StreamingAsr, type AsrModelId } from './dsp/asr';
 import type { Profile } from './dsp/types';
 import { fromSentence, voteFrom, type TimelineItem } from './attribution';
 import { Captions, type Attribution } from './captions';
@@ -32,6 +32,8 @@ let asr: StreamingAsr | null = null; // 本機語音辨識
 let asrOn = false;
 let captionEngine: 'local' | 'browser' = 'local';
 const CAP_ENGINE_KEY = 'voiceid.capEngine.v1';
+const ASR_MODEL_KEY = 'voiceid.asrModel.v1';
+let asrModel: AsrModelId = 'zhen';
 const CALIB_KEY = 'voiceid.ambientCalib.v1';
 let ambient: AmbientMonitor = new AmbientMonitor(null);
 let amb: AmbientState | null = null; // 最新的環境狀態
@@ -353,6 +355,7 @@ function updateButtons() {
   $<HTMLSelectElement>('source').disabled = micOn || capOnlyOn;
   $<HTMLInputElement>('capOnly').disabled = micOn || capOnlyOn;
   $<HTMLSelectElement>('capEngine').disabled = micOn || capOnlyOn;
+  $<HTMLSelectElement>('asrModel').disabled = micOn || capOnlyOn;
 }
 
 async function refreshMics() {
@@ -481,18 +484,47 @@ function wireAmbient(tagErr: string) {
 }
 
 // ---------- 字幕引擎 ----------
+/** 載入（或換成）指定的本機辨識模型；成功回傳空字串，失敗回傳原因 */
+async function loadAsr(id: AsrModelId): Promise<string> {
+  $('capState').textContent = `字幕狀態：下載「${ASR_MODELS[id].label}」辨識模型中…（第一次較久，之後會快取）`;
+  try {
+    const next = await StreamingAsr.load(ASR_MODELS[id].base);
+    next.onPartial = (t) => captions.localPartial(t);
+    next.onFinal = (t) => captions.localFinal(t);
+    next.onLag = (sec) => { $('capStatus').textContent = `手機處理速度跟不上（落後 ${sec.toFixed(1)} 秒），字幕會延遲`; };
+    asr = next;
+    $('capState').textContent = `字幕狀態：「${ASR_MODELS[id].label}」模型已就緒`;
+    return '';
+  } catch (e) {
+    console.warn('本機語音辨識模型載入失敗：', e);
+    $('capState').textContent = '字幕狀態：模型沒有載入';
+    return (e as Error).message ?? String(e);
+  }
+}
+
 async function setupCaptionEngine() {
   const sel = $<HTMLSelectElement>('capEngine');
-  let asrErr = '';
-  try {
-    asr = await StreamingAsr.load();
-    asr.onPartial = (t) => captions.localPartial(t);
-    asr.onFinal = (t) => captions.localFinal(t);
-    asr.onLag = (sec) => { $('capStatus').textContent = `手機處理速度跟不上（落後 ${sec.toFixed(1)} 秒），字幕會延遲`; };
-  } catch (e) {
-    asrErr = (e as Error).message ?? String(e);
-    console.warn('本機語音辨識模型載入失敗：', e);
-  }
+  // 字幕語言（本機辨識模型）：中英夾雜 / 純中文，用到哪個才下載
+  const langSel = $<HTMLSelectElement>('asrModel');
+  try { asrModel = (localStorage.getItem(ASR_MODEL_KEY) as AsrModelId) || 'zhen'; } catch { /* 略過 */ }
+  if (!(asrModel in ASR_MODELS)) asrModel = 'zhen';
+  langSel.value = asrModel;
+  const asrErr = await loadAsr(asrModel);
+  langSel.onchange = async () => {
+    const id = langSel.value as AsrModelId;
+    try { localStorage.setItem(ASR_MODEL_KEY, id); } catch { /* 略過 */ }
+    langSel.disabled = true;
+    $('listen').setAttribute('disabled', '');
+    const err = await loadAsr(id);
+    langSel.disabled = false;
+    $('listen').removeAttribute('disabled');
+    if (err) {
+      $('capStatus').textContent = `${ASR_MODELS[id].label}模型載入失敗（${err}）`;
+    } else {
+      asrModel = id;
+      $('capStatus').textContent = '';
+    }
+  };
   const isPhoneOrGlasses = platform.kind === 'even' || /iPhone|iPad|Android/i.test(navigator.userAgent);
   let saved = '';
   try { saved = localStorage.getItem(CAP_ENGINE_KEY) || ''; } catch { /* 略過 */ }

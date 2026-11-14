@@ -14,7 +14,7 @@
     <title>聲紋辨識 VoiceID</title>
     <!-- ONNX Runtime（跑 CAM++ 聲紋模型）。檔案由 install.bat 複製到 public/ort/ -->
     <script src="./ort/ort.min.js"></script>
-    <link rel="stylesheet" href="./assets/main.css?v=5ad686c1" />
+    <link rel="stylesheet" href="./assets/main.css?v=417f8a3c" />
   </head>
   <body>
     <main>
@@ -68,6 +68,14 @@
           </label>
         </div>
         <div class="row">
+          <label>字幕語言（本機辨識）
+            <select id="asrModel">
+              <option value="zhen">中英夾雜（約 60MB）</option>
+              <option value="zh">純中文（約 25MB，較省電）</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
           <label>語言（瀏覽器內建才有效）
             <select id="lang">
               <option value="zh-TW">中文（台灣）</option>
@@ -84,7 +92,7 @@
           <input type="checkbox" id="filterStrangers" checked />
           <b>只顯示認識的人</b>（陌生人說的話不出現在字幕上；需要聽陌生人時關掉）
         </label>
-        <p class="hint">「手機本機辨識」在手機上跑中文語音辨識模型（約 25MB），音訊不上傳，跟聲紋、環境偵測共用麥克風，眼鏡也能用；目前只有中文，英文單字會辨識錯。「瀏覽器內建」用 Chrome / Edge 的辨識，比較準、可中英夾雜，但需要網路、語音會上傳，而且只能用電腦麥克風。</p>
+        <p class="hint">「手機本機辨識」在手機上跑語音辨識模型，音訊不上傳，跟聲紋、環境偵測共用麥克風，眼鏡也能用。「中英夾雜」可以辨識一句話裡混用的中英文；「純中文」比較小、比較省電，但英文會辨識錯。「瀏覽器內建」用 Chrome / Edge 的辨識，比較準、可中英夾雜，但需要網路、語音會上傳，而且只能用電腦麥克風。</p>
         <div id="capState" class="hint">字幕狀態：尚未開始</div>
         <div id="capStatus" class="hint warn"></div>
         <div id="transcript" class="transcript"></div>
@@ -113,6 +121,6 @@
         </label>
       </section>
     </main>
-    <script type="module" src="./assets/main.js?v=5ad686c1"></script>
+    <script type="module" src="./assets/main.js?v=417f8a3c"></script>
   </body>
 </html>
