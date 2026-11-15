@@ -58,13 +58,22 @@ export class Captions {
   }
 
   /** 電腦運算：一句話結束（電腦提供這句話的開始 / 結束時間，聲紋判斷更準） */
-  remoteFinal(text: string, startMs: number, endMs: number) {
+  remoteFinal(text: string, startMs: number, endMs: number, id?: number) {
     if (!this.running && !text) return;
     this.interim = '';
     this.segStart = 0;
-    if (text) this.commit(text, startMs, endMs);
+    if (text) this.commit(text, startMs, endMs, id);
     this.onChange();
   }
+
+  /** 電腦運算：先出現的快速字幕，被較準的整句辨識結果取代 */
+  revise(id: number, text: string) {
+    const line = this.byId.get(id);
+    if (line) { line.text = text; this.onChange(); }
+    else this.pendingRevise.set(id, text); // 這句還在判斷說話者，等加進字幕時再換
+  }
+  private byId = new Map<number, { text: string }>();
+  private pendingRevise = new Map<number, string>();
 
   /** 正在說的這句話目前的歸屬（給畫面顯示用） */
   interimAttribution(): Attribution {
@@ -165,7 +174,7 @@ export class Captions {
     }
   }
 
-  commit(text: string, startMs?: number, endMs?: number) {
+  commit(text: string, startMs?: number, endMs?: number, id?: number) {
     const now = endMs ?? Date.now();
     // 沒抓到開始時間（辨識直接給最終結果）→ 用字數估計長度（中文大約每秒 4 個字）
     // 說話到出現字幕大約有 0.5 秒延遲，開始時間往前推一點
@@ -176,7 +185,14 @@ export class Captions {
       const a = await pending;
       if (a.drop) return; // 陌生人：直接濾掉
       // 每次停頓都是新的一行（不再把同一個人連續說的話併成一行）
-      this.lines.push({ speaker: a.speaker, stranger: a.stranger, text });
+      const finalText = (id !== undefined && this.pendingRevise.get(id)) || text;
+      const line = { speaker: a.speaker, stranger: a.stranger, text: finalText };
+      this.lines.push(line);
+      if (id !== undefined) {
+        this.pendingRevise.delete(id);
+        this.byId.set(id, line);
+        if (this.byId.size > 50) this.byId.delete(this.byId.keys().next().value as number);
+      }
       if (this.lines.length > 200) this.lines.shift();
       this.onChange();
     });

@@ -55,7 +55,9 @@ export function wsUrl(raw: string): string {
 export class RemoteAsr {
   onPartial: (text: string) => void = () => {};
   /** 一句話結束；startMs / endMs 是這句話在手機時鐘上的時間（給聲紋判斷說話者用） */
-  onFinal: (text: string, startMs: number, endMs: number) => void = () => {};
+  onFinal: (text: string, startMs: number, endMs: number, id?: number) => void = () => {};
+  /** 電腦整句重新辨識完成，取代先前快速出現的那一句 */
+  onRevise: (id: number, text: string) => void = () => {};
   onLag: (sec: number) => void = () => {};
   onState: (s: RemoteState, msg: string) => void = () => {};
   state: RemoteState = 'off';
@@ -138,8 +140,9 @@ export class RemoteAsr {
           e = now - 700;
           s = e - Math.max(1000, String(m.text).length * 250);
         }
-        this.onFinal(m.text, s, e);
+        this.onFinal(m.text, s, e, typeof m.id === 'number' ? m.id : undefined);
       }
+      else if (m.type === 'revise') this.onRevise(m.id, m.text);
       else if (m.type === 'lag') this.onLag(m.sec);
       else if (m.type === 'pong') {
         this.lastPong = Date.now();
@@ -175,7 +178,7 @@ export class RemoteAsr {
       this.retry(url, key);
       return;
     }
-    try { this.ws.send(JSON.stringify({ type: 'ping', t: Date.now() })); } catch { /* 下次再試 */ }
+    try { this.ws.send(JSON.stringify({ type: 'ping', t: Date.now(), rtt: this.info.rttMs })); } catch { /* 下次再試 */ }
   }
 
   /** 樣本編號 → 手機時間（毫秒） */

@@ -214,7 +214,7 @@ class StreamingAsr:
             self.tok = load_tokens(os.path.join(base, 'tokens.txt'))
             self.to_tw = make_converter(os.path.join(base, 's2t.json'))
             self.enc_out_names = [o.name for o in self.enc.get_outputs()]
-        self.endpoint_sec, self.soft_break_sec, self.max_sentence_sec = 1.0, 0.5, 15.0
+        self.endpoint_sec, self.soft_break_sec, self.max_sentence_sec = 0.8, 0.5, 12.0
         self.on_partial = lambda t: None
         self.on_final = lambda t, s, e: None
         self.fb = Fbank('povey', 7600.0, 20.0, 1.0)

@@ -81,7 +81,7 @@ def find(paths, must):
 class Models:
     def __init__(self):
         cpu = os.cpu_count() or 4
-        self.threads = max(2, min(8, cpu - 1))  # 整句辨識一陣一陣的，多用幾個核心等待比較短
+        self.threads = max(2, min(6, cpu // 2))  # 大約等於實體核心數：再多反而會互搶變慢
         self.asr = {}
         for k, paths in ASR_BASES.items():
             p = find(paths, 'asr_config.json')
@@ -98,6 +98,16 @@ class Models:
         self.dn = V.Denoiser(dn) if os.path.exists(dn) else None
         log('AI 降噪（DPDFNet）：' + ('已載入' if self.dn else '沒有找到'))
         self.sv_lock = threading.Lock()
+        # 暖機：第一次執行模型特別慢，先跑一次，第一個連線的人才不會等
+        t0 = time.time()
+        z = (np.random.default_rng(0).standard_normal(SR * 3) * 0.01).astype(np.float32)
+        warm = V.StreamingAsr(share=next(iter(self.asr.values())))
+        warm.push(z)
+        if self.sv:
+            self.sv(z)
+        if self.dn:
+            V.Denoiser(share=self.dn).process(z[:SR])
+        log(f'模型暖機完成（{time.time() - t0:.1f} 秒），CPU 核心 {cpu} 個，整句辨識用 {self.threads} 個')
 
 
 # ---------------------------------------------------------------- 一個手機連線
@@ -114,6 +124,8 @@ class Session:
         self.scene = set()
         self.dn = V.Denoiser(share=models.dn) if models.dn else None
         self.q = queue.Queue()
+        self.final_id = 0
+        self.rtts = []
         self.asr_base = 0  # 串流字幕模型的第 0 個樣本 = 全部收到的第幾個樣本
         self.chunks = collections.deque()  # 最近 30 秒原始聲音 [(起始樣本, 聲音)]（整句重新辨識用），只在記憶體
         self.received = 0
@@ -208,6 +220,11 @@ class Session:
         seg = np.concatenate(parts) if parts else np.zeros(0, np.float32)
         dn = self.denoise_on()
         t_final = time.time()
+        self.final_id += 1
+        fid = self.final_id
+        # 先馬上送出串流模型的結果（不用等整句辨識），整句辨識好了再送「修正」取代
+        if has_words(text):
+            self.send({'type': 'final', 'id': fid, 'text': text, 'start': start, 'end': end, 'denoise': dn})
 
         def job():
             nonlocal seg
@@ -230,8 +247,11 @@ class Session:
                 log(f'⚠ 整句辨識較慢：句長 {len(seg) / SR:.1f} 秒、辨識 {took:.1f} 秒、等待 {t0 - t_final:.1f} 秒')
             if not self.alive:
                 return
-            if has_words(best):
-                self.send({'type': 'final', 'text': best, 'stream': text, 'start': start, 'end': end, 'denoise': dn})
+            if has_words(best) and best != text:
+                if has_words(text):
+                    self.send({'type': 'revise', 'id': fid, 'text': best})
+                else:
+                    self.send({'type': 'final', 'id': fid, 'text': best, 'start': start, 'end': end, 'denoise': dn})
 
         if self.alive:
             try:
@@ -416,6 +436,12 @@ class Server:
                     t = msg.get('type')
                     if t == 'ping':
                         send({'type': 'pong', 't': msg.get('t')})
+                        if sess and isinstance(msg.get('rtt'), (int, float)) and msg['rtt'] > 0:
+                            sess.rtts.append(msg['rtt'])
+                            if len(sess.rtts) >= 12:  # 大約每分鐘記一次網路延遲
+                                r = sorted(sess.rtts)
+                                log(f'網路來回延遲：中位數 {r[len(r) // 2]} 毫秒、最慢 {r[-1]} 毫秒')
+                                sess.rtts = []
                     elif t == 'hello':
                         if not secrets.compare_digest(str(msg.get('key', '')), self.cfg['key']):
                             await asyncio.sleep(self.guard.fail(src))  # 錯越多次等越久，讓人沒辦法一直試

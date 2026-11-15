@@ -682,7 +682,8 @@ async function wireCompute() {
     connectRemote();
   };
   remote.onPartial = (t) => { if (useRemote) captions.localPartial(t); };
-  remote.onFinal = (t, s, e) => { if (useRemote) captions.remoteFinal(t, s, e); };
+  remote.onFinal = (t, s, e, id) => { if (useRemote) captions.remoteFinal(t, s, e, id); };
+  remote.onRevise = (id, t) => captions.revise(id, t);
   remote.onLag = (sec) => { $('capStatus').textContent = `電腦處理速度跟不上或網路太慢（落後 ${sec.toFixed(1)} 秒）`; };
   remote.onState = (st, msg) => {
     const extra = st === 'ready'
