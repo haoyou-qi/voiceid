@@ -18,6 +18,12 @@ echo [2/3] 安裝 onnxruntime、numpy...
 "%PY%" -m pip install --upgrade onnxruntime numpy
 if errorlevel 1 (
   echo.
+  echo 沒有權限安裝到系統資料夾，改成只安裝給目前的使用者（--user）...
+  "%PY%" -m pip install --user --upgrade onnxruntime numpy
+)
+"%PY%" -c "import onnxruntime, numpy"
+if errorlevel 1 (
+  echo.
   echo 套件安裝失敗，請把上面的錯誤訊息截圖給 Claude。
   pause
   exit /b 1
