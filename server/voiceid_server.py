@@ -34,8 +34,19 @@ MAX_SESSIONS = 4
 SR = 16000
 
 
+LOGFILE = os.path.join(HERE, 'server.log')
+
+
 def log(*a):
-    print(time.strftime('%H:%M:%S'), *a, flush=True)
+    line = ' '.join([time.strftime('%m-%d %H:%M:%S')] + [str(x) for x in a])
+    print(line, flush=True)
+    try:  # 也寫到 server.log（只記連線狀態，不記聲音或字幕內容），方便檢查問題
+        if os.path.exists(LOGFILE) and os.path.getsize(LOGFILE) > 1_000_000:
+            os.replace(LOGFILE, LOGFILE + '.old')
+        with open(LOGFILE, 'a', encoding='utf-8') as f:
+            f.write(line + '\n')
+    except Exception:
+        pass
 
 
 def load_config():
@@ -295,6 +306,7 @@ class Server:
         # 經過 Tailscale 時，真正的來源 IP 在 X-Forwarded-For；沒有的話就當作同一個來源
         src = (hdr.get('x-forwarded-for', '').split(',')[0].strip()
                or (w.get_extra_info('peername') or ('?',))[0])
+        log(f'請求 {path.split("?")[0][:40]} 來源 {src} {"websocket" if hdr.get("upgrade", "").lower() == "websocket" else "網頁"}')
         if hdr.get('upgrade', '').lower() != 'websocket' or path.split('?')[0] != '/ws' or self.guard.blocked(src):
             # 一般網頁請求、其他路徑、被封鎖的來源：一律回「找不到」，不透露這是什麼服務
             w.write(b'HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found')
