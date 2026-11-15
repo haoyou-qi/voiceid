@@ -64,6 +64,8 @@ export interface AmbientState {
   fluct: number; // 音量起伏（dB）：一人說話通常 > 14，多人重疊 < 11
   alert: string | null; // 目前的警報（顯示 5 秒）
   tagged: boolean; // 有沒有用到聲音分類模型
+  /** 最近 2 秒有多少比例是「已建檔的人」在說話（這些聲音不算環境音） */
+  knownFrac: number;
 }
 
 const pct = (a: number[], p: number) => {
@@ -88,6 +90,10 @@ export class AmbientMonitor {
   private lastAlertAt = new Map<string, number>();
   /** 取得現在時間（毫秒）；測試時可換成模擬時鐘 */
   now: () => number = () => Date.now();
+  /** 這個時間點（毫秒）是不是已建檔的人在說話？是的話那段聲音不算進環境音（由聲紋辨識提供） */
+  isKnown: (tMs: number) => boolean = () => false;
+  private lastPushT = 0;
+  private lastFloor = -90;
 
   constructor(public tagger: TagFn | null) {}
 
@@ -107,6 +113,7 @@ export class AmbientMonitor {
       this.buf.set(samples, this.buf.length - n);
     }
     this.filled = Math.min(this.buf.length, this.filled + n);
+    this.lastPushT = this.now();
     this.sinceUpdate += n;
     if (this.sinceUpdate >= SR && this.filled >= SR) {
       this.sinceUpdate = 0;
@@ -133,17 +140,37 @@ export class AmbientMonitor {
     return out;
   }
 
+  /** 每一格（10ms）是不是已建檔的人在說話 */
+  private knownMask(nFrames: number): boolean[] {
+    const out: boolean[] = new Array(nFrames);
+    for (let i = 0; i < nFrames; i++) out[i] = this.isKnown(this.lastPushT - (nFrames - i) * 10);
+    return out;
+  }
+
+  /** 排除建檔者說話後剩下的音量（最新 0.6 秒先不算：聲紋還沒判斷完是誰在說話） */
   private rawFloor(): number {
     const db = this.frameDb();
+    if (!db.length) return this.lastFloor;
+    const mask = this.knownMask(db.length);
+    const usable = db.slice(0, Math.max(0, db.length - 60));
+    const env = usable.filter((_, i) => !mask[i]);
     // 環境音量：取 30% 分位數。說話聲、音樂、人聲會反映進來，但偶爾一聲大響不會讓它跳到「很吵」
-    return db.length ? pct(db, 0.3) : -90;
+    // 建檔的人說話的部分不算。他一直在說話、剩下不到 0.5 秒時：用字和字之間的停頓（最小聲的 10%）當作背景音量
+    if (env.length >= 50) this.lastFloor = pct(env, 0.3);
+    else this.lastFloor = pct(usable.length ? usable : db, 0.1);
+    return this.lastFloor;
   }
 
   private async update() {
     if (this.busy) return;
     this.busy = true;
     try {
-      const db = this.frameDb();
+      const all = this.frameDb();
+      const mask = this.knownMask(all.length);
+      const recent = mask.slice(-200); // 最近 2 秒
+      const knownFrac = recent.length ? recent.filter(Boolean).length / recent.length : 0;
+      const env = all.filter((_, i) => !mask[i]);
+      const db = env.length >= 50 ? env : all;
       const valid = db.filter((v) => v > Math.max(...db) - 50); // 忽略數位靜音
       const fluct = valid.length > 20 ? pct(valid, 0.9) - pct(valid, 0.2) : 0;
       const floorDb = this.rawFloor() + SPL_OFFSET + this.calibOffset + this.sensitivity;
@@ -166,9 +193,13 @@ export class AmbientMonitor {
       const scene: string[] = [];
       if (probs) {
         // 人聲吵雜：模型判斷有人群，或「有人聲但音量起伏很小」（多人聲音重疊、或很吵的地方）
-        const crowd = probs.crowd >= 0.3 || (probs.speech >= 0.5 && fluct > 0 && fluct < 11 && probs.music < 0.3 && probs.traffic < 0.3);
+        // 主要是建檔的人在說話：他的聲音不算環境音（不顯示「有人說話」，人群也要模型很確定才算）
+        const knownTalking = knownFrac >= 0.5;
+        const crowd = knownTalking
+          ? probs.crowd >= 0.5
+          : probs.crowd >= 0.3 || (probs.speech >= 0.5 && fluct > 0 && fluct < 11 && probs.music < 0.3 && probs.traffic < 0.3);
         if (crowd) scene.push('人聲吵雜');
-        else if (probs.speech >= 0.5) scene.push('有人說話');
+        else if (probs.speech >= 0.5 && !knownTalking) scene.push('有人說話');
         if (probs.music >= 0.3) scene.push('有音樂');
         if (probs.traffic >= 0.4) scene.push('車聲／機器聲');
       }
@@ -184,6 +215,7 @@ export class AmbientMonitor {
         floorDb, level, levelLabel: L.label, scene, advice, short, probs, fluct,
         alert: now < this.alertUntil ? this.alertLabel : null,
         tagged: !!this.tagger,
+        knownFrac,
       });
     } finally {
       this.busy = false;

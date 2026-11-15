@@ -212,6 +212,16 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /** 同一份音訊同時送給聲紋辨識和環境偵測 */
+/** 這個時間點是不是已建檔的人在說話（聲紋每 0.5 秒看最近 2 秒，所以每次結果往前涵蓋 2.3 秒） */
+function knownAt(t: number): boolean {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const it = timeline[i];
+    if (it.t < t - 200) break; // 更早的判斷涵蓋不到這個時間
+    if (it.name && !it.stranger && t >= it.t - 2300) return true;
+  }
+  return false;
+}
+
 function feed(f: Float32Array) {
   engine.pushFloat(f);
   if (engine.mode === 'listening') ambient.push(f);
@@ -504,6 +514,7 @@ function wireAmbient(tagErr: string) {
     try { localStorage.setItem(SENS_KEY, sens.value); } catch { /* 略過 */ }
     showSens();
   };
+  ambient.isKnown = knownAt; // 已建檔的人說話的聲音不算環境音
   $('ambNote').textContent = tagErr
     ? `聲音分類模型沒有載入（${tagErr}），目前只顯示吵雜程度。請重新執行 install.bat。`
     : '';
@@ -519,7 +530,8 @@ function wireAmbient(tagErr: string) {
     const p = st.probs;
     $('ambDetail').textContent =
       `環境音量約 ${st.floorDb.toFixed(0)} 分貝（估計${micDenoised ? '；目前開著降噪，音樂和背景聲會被壓低，可能誤判成安靜' : ''}）・音量起伏 ${st.fluct.toFixed(0)} dB` +
-      (p ? `・說話 ${(p.speech * 100).toFixed(0)}%・人群 ${(p.crowd * 100).toFixed(0)}%・音樂 ${(p.music * 100).toFixed(0)}%・車聲 ${(p.traffic * 100).toFixed(0)}%` : '');
+      (p ? `・說話 ${(p.speech * 100).toFixed(0)}%・人群 ${(p.crowd * 100).toFixed(0)}%・音樂 ${(p.music * 100).toFixed(0)}%・車聲 ${(p.traffic * 100).toFixed(0)}%` : '') +
+      (st.knownFrac > 0 ? `・已排除建檔者說話的聲音（最近 2 秒的 ${(st.knownFrac * 100).toFixed(0)}%）` : '');
     if (st.scene.includes('有音樂') && !st.alert) $('ambAdvice').textContent += '（有音樂，字幕可能比較不準）';
     render();
   };
