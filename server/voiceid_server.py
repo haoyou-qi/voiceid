@@ -439,8 +439,8 @@ class Server:
                         if sess and isinstance(msg.get('rtt'), (int, float)) and msg['rtt'] > 0:
                             sess.rtts.append(msg['rtt'])
                             if len(sess.rtts) >= 12:  # 大約每分鐘記一次網路延遲
-                                r = sorted(sess.rtts)
-                                log(f'網路來回延遲：中位數 {r[len(r) // 2]} 毫秒、最慢 {r[-1]} 毫秒')
+                                rs = sorted(sess.rtts)  # 注意：不能用 r，r 是連線的讀取端
+                                log(f'網路來回延遲：中位數 {rs[len(rs) // 2]} 毫秒、最慢 {rs[-1]} 毫秒')
                                 sess.rtts = []
                     elif t == 'hello':
                         if not secrets.compare_digest(str(msg.get('key', '')), self.cfg['key']):
