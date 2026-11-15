@@ -2,6 +2,8 @@
 // 跟本機辨識（StreamingAsr）用同樣的介面：push / reset / flush / onPartial / onFinal，主程式可以隨時切換。
 // 斷線時 main.ts 會自動改回手機本機辨識。
 
+import { idbGet, idbSet } from './store';
+
 export type RemoteState = 'off' | 'connecting' | 'ready' | 'error';
 
 const URL_KEY = 'voiceid.remote.url.v1';
@@ -9,15 +11,36 @@ const KEY_KEY = 'voiceid.remote.key.v1';
 const MODE_KEY = 'voiceid.compute.v1';
 export type ComputeMode = 'auto' | 'pc' | 'phone';
 
+const IDB_KEY = 'remote';
+/** 同時存 localStorage + IndexedDB（iPhone 有時會清掉 localStorage，跟聲紋檔一樣存兩份） */
+function lsGet(k: string) { try { return localStorage.getItem(k) || ''; } catch { return ''; } }
+function lsSet(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* 略過 */ } }
+function mirror() {
+  void idbSet(IDB_KEY, { url: lsGet(URL_KEY), key: lsGet(KEY_KEY), mode: lsGet(MODE_KEY) }).catch(() => undefined);
+}
+
 export const remoteSettings = {
-  get url() { try { return localStorage.getItem(URL_KEY) || ''; } catch { return ''; } },
-  set url(v: string) { try { localStorage.setItem(URL_KEY, v); } catch { /* 略過 */ } },
-  get key() { try { return localStorage.getItem(KEY_KEY) || ''; } catch { return ''; } },
-  set key(v: string) { try { localStorage.setItem(KEY_KEY, v); } catch { /* 略過 */ } },
+  get url() { return lsGet(URL_KEY); },
+  set url(v: string) { lsSet(URL_KEY, v); mirror(); },
+  get key() { return lsGet(KEY_KEY); },
+  set key(v: string) { lsSet(KEY_KEY, v); mirror(); },
   get mode(): ComputeMode {
-    try { const m = localStorage.getItem(MODE_KEY); return m === 'pc' || m === 'phone' ? m : 'auto'; } catch { return 'auto'; }
+    const m = lsGet(MODE_KEY);
+    return m === 'pc' || m === 'phone' ? m : 'auto';
   },
-  set mode(v: ComputeMode) { try { localStorage.setItem(MODE_KEY, v); } catch { /* 略過 */ } },
+  set mode(v: ComputeMode) { lsSet(MODE_KEY, v); mirror(); },
+  /** 開網站時呼叫：localStorage 被清掉的話，從 IndexedDB 找回網址和金鑰 */
+  async restore() {
+    if (lsGet(URL_KEY) && lsGet(KEY_KEY)) { mirror(); return; }
+    try {
+      const r = await idbGet<{ url: string; key: string; mode: string }>(IDB_KEY);
+      if (r?.url && r.key) {
+        lsSet(URL_KEY, r.url);
+        lsSet(KEY_KEY, r.key);
+        if (r.mode) lsSet(MODE_KEY, r.mode);
+      }
+    } catch { /* 略過 */ }
+  },
 };
 
 /** 使用者貼上的網址 → wss://…/ws（接受 https://xxx、xxx.ts.net、ws://localhost:8765 等寫法） */

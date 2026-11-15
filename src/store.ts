@@ -16,7 +16,7 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-async function idbGet<T>(key: string): Promise<T | undefined> {
+export async function idbGet<T>(key: string): Promise<T | undefined> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const r = db.transaction(STORE, 'readonly').objectStore(STORE).get(key);
@@ -25,7 +25,7 @@ async function idbGet<T>(key: string): Promise<T | undefined> {
   });
 }
 
-async function idbSet(key: string, value: unknown): Promise<void> {
+export async function idbSet(key: string, value: unknown): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
@@ -68,16 +68,20 @@ export async function saveProfilesToStorage(lsKey: string, profiles: Profile[]) 
 
 // ---------- 備份檔 ----------
 
+export interface RemoteBackup { url: string; key: string; mode?: string }
+
 interface Backup {
   app: 'voiceid';
   version: 1;
   exportedAt: string;
   profiles: Profile[];
+  remote?: RemoteBackup; // 電腦運算的網址和金鑰（有設定才會有）
 }
 
 /** 匯出備份檔：手機上跳出分享選單（可存到「檔案」或傳 LINE 給自己），電腦上直接下載 */
-export async function exportBackup(profiles: Profile[]): Promise<'shared' | 'downloaded' | 'cancelled'> {
+export async function exportBackup(profiles: Profile[], remote?: RemoteBackup): Promise<'shared' | 'downloaded' | 'cancelled'> {
   const data: Backup = { app: 'voiceid', version: 1, exportedAt: new Date().toISOString(), profiles };
+  if (remote?.url && remote.key) data.remote = remote;
   const d = new Date();
   const name = `voiceid-聲紋備份-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
   const file = new File([JSON.stringify(data)], name, { type: 'application/json' });
@@ -101,13 +105,14 @@ export async function exportBackup(profiles: Profile[]): Promise<'shared' | 'dow
 }
 
 /** 讀取備份檔，回傳裡面的聲紋檔（格式不對會丟錯） */
-export async function readBackup(file: File): Promise<Profile[]> {
+export async function readBackup(file: File): Promise<{ profiles: Profile[]; remote?: RemoteBackup }> {
   const data = JSON.parse(await file.text()) as Partial<Backup>;
   if (data.app !== 'voiceid' || !Array.isArray(data.profiles)) throw new Error('這不是 VoiceID 的備份檔');
   for (const p of data.profiles) {
     if (!p || typeof p.name !== 'string' || !p.kind) throw new Error('備份檔內容有誤');
   }
-  return data.profiles;
+  const r = data.remote;
+  return { profiles: data.profiles, remote: r && typeof r.url === 'string' && typeof r.key === 'string' ? r : undefined };
 }
 
 /** 是否在 LINE / Facebook / Instagram 這類 app 內建瀏覽器（資料容易被清掉、也可能拿不到麥克風） */

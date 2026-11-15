@@ -645,7 +645,8 @@ function connectRemote() {
   remote.connect(url, key, asrModel, 'auto');
 }
 
-function wireCompute() {
+async function wireCompute() {
+  await remoteSettings.restore();
   try { const m = localStorage.getItem(ASR_MODEL_KEY) as AsrModelId; if (m && m in ASR_MODELS) asrModel = m; } catch { /* 略過 */ }
   // 分享連結可以直接帶設定：…/voiceid/?pc=電腦網址&k=通行金鑰（填好後會從網址列移除）
   try {
@@ -685,7 +686,7 @@ function wireCompute() {
   remote.onLag = (sec) => { $('capStatus').textContent = `電腦處理速度跟不上或網路太慢（落後 ${sec.toFixed(1)} 秒）`; };
   remote.onState = (st, msg) => {
     const extra = st === 'ready'
-      ? `（${remote.info.sensevoice ? '高準確度整句辨識' : '串流辨識'}${remote.info.denoise ? '・有音樂時自動降噪' : ''}）`
+      ? `（${remote.info.sensevoice ? '高準確度整句辨識' : '串流辨識'}${remote.info.denoise ? '・有音樂時自動降噪' : ''}）・已記住，下次開網站會自動連線`
       : '';
     $('remoteState').textContent = `電腦運算：${msg}${extra}`;
     $('remoteState').className = st === 'error' ? 'hint warn' : 'hint';
@@ -698,8 +699,8 @@ function wireCompute() {
 // ---------- 備份 / 還原 ----------
 function wireBackup() {
   $('backup').onclick = async () => {
-    if (!engine.profiles.length) return alert('目前沒有聲紋檔可以備份');
-    const r = await exportBackup(engine.profiles);
+    if (!engine.profiles.length && !remoteSettings.url) return alert('目前沒有聲紋檔或設定可以備份');
+    const r = await exportBackup(engine.profiles, { url: remoteSettings.url, key: remoteSettings.key, mode: remoteSettings.mode });
     $('backupMsg').textContent =
       r === 'shared' ? '✓ 已產生備份檔（請存到「檔案」或傳 LINE 給自己保存）'
       : r === 'downloaded' ? '✓ 備份檔已下載'
@@ -712,7 +713,18 @@ function wireBackup() {
     input.value = '';
     if (!f) return;
     try {
-      const list = await readBackup(f);
+      const { profiles: list, remote: rs } = await readBackup(f);
+      if (rs) { // 備份檔裡有電腦運算設定：一起還原
+        remoteSettings.url = rs.url;
+        remoteSettings.key = rs.key;
+        if (rs.mode === 'auto' || rs.mode === 'pc' || rs.mode === 'phone') remoteSettings.mode = rs.mode;
+        computeMode = remoteSettings.mode;
+        $<HTMLSelectElement>('computeMode').value = computeMode;
+        $<HTMLInputElement>('remoteUrl').value = rs.url;
+        $<HTMLInputElement>('remoteKey').value = rs.key;
+        $('remoteFields').style.display = computeMode === 'phone' ? 'none' : '';
+        connectRemote();
+      }
       // 合併：同名同類型的以備份檔為準
       const key = (p: Profile) => `${p.kind}:${p.name}`;
       const incoming = new Set(list.map(key));
@@ -721,7 +733,7 @@ function wireBackup() {
       void requestPersist();
       renderProfiles();
       render();
-      $('backupMsg').textContent = `✓ 已還原 ${list.length} 個聲紋檔：${list.map((p) => p.name).join('、')}`;
+      $('backupMsg').textContent = `✓ 已還原 ${list.length} 個聲紋檔：${list.map((p) => p.name).join('、')}${rs ? '，以及電腦運算設定' : ''}`;
     } catch (e) {
       $('backupMsg').textContent = `還原失敗：${(e as Error).message}`;
     }
@@ -761,7 +773,7 @@ async function boot() {
   platform = await detectPlatform('VoiceID 啟動中…');
   source = platform.sources[0];
   $('platform').textContent = (platform.kind === 'even' ? 'Even Hub 模式' : '瀏覽器模式') + ' · ' + engine.backend.label;
-  wireCompute();
+  await wireCompute();
   await setupCaptionEngine(); // 要在知道平台（手機 / 眼鏡 / 電腦）之後才能決定預設字幕引擎
   $('engineNote').textContent = modelError ? `CAM++ 模型沒有載入（${modelError}），目前用備援方法，準確度較低。請重新執行 install.bat。` : '';
   if (engine.profiles.some((p) => p.kind !== engine.backend.kind))
