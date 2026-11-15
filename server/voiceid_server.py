@@ -61,6 +61,9 @@ def load_config():
     if not cfg.get('key'):
         cfg['key'] = secrets.token_urlsafe(9)  # 12 個字元
         changed = True
+    if not cfg.get('path'):  # 秘密路徑：只有 /秘密路徑/ws 才是真正的入口，其他網址一律「找不到」
+        cfg['path'] = secrets.token_urlsafe(12)
+        changed = True
     cfg.setdefault('port', 8765)
     if changed:
         json.dump(cfg, open(CONFIG, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
@@ -320,6 +323,20 @@ def frame(op, data: bytes):
     return h + data
 
 
+def write_share_link(cfg):
+    """把「給朋友的連結」寫到 分享連結.txt（含金鑰，請只私下傳給朋友）"""
+    base = (cfg.get('public_url') or '').rstrip('/')
+    if not base:
+        log('（提示：在 config.json 加上 "public_url": "https://你的網址.ts.net"，就會自動產生分享連結）')
+        return
+    import urllib.parse
+    pc = f"{base}/{cfg['path']}"
+    link = 'https://haoyou-qi.github.io/voiceid/?' + urllib.parse.urlencode({'pc': pc, 'k': cfg['key']})
+    txt = (f'電腦網址：{pc}\n通行金鑰：{cfg["key"]}\n\n給朋友的連結（點開會自動設定好，請只私下傳給朋友本人）：\n{link}\n')
+    open(os.path.join(HERE, '分享連結.txt'), 'w', encoding='utf-8').write(txt)
+    log(f'分享連結已更新：{os.path.join(HERE, "分享連結.txt")}')
+
+
 class Server:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -343,8 +360,10 @@ class Server:
         # 經過 Tailscale 時，真正的來源 IP 在 X-Forwarded-For；沒有的話就當作同一個來源
         src = (hdr.get('x-forwarded-for', '').split(',')[0].strip()
                or (w.get_extra_info('peername') or ('?',))[0])
-        log(f'請求 {path.split("?")[0][:40]} 來源 {src} {"websocket" if hdr.get("upgrade", "").lower() == "websocket" else "網頁"}')
-        if hdr.get('upgrade', '').lower() != 'websocket' or path.split('?')[0] != '/ws' or self.guard.blocked(src):
+        shown = '（正確入口）' if path.split('?')[0] == f"/{self.cfg['path']}/ws" else path.split('?')[0][:40]
+        log(f'請求 {shown} 來源 {src} {"websocket" if hdr.get("upgrade", "").lower() == "websocket" else "網頁"}')
+        ok_path = path.split('?')[0] == f"/{self.cfg['path']}/ws"
+        if hdr.get('upgrade', '').lower() != 'websocket' or not ok_path or self.guard.blocked(src):
             # 一般網頁請求、其他路徑、被封鎖的來源：一律回「找不到」，不透露這是什麼服務
             w.write(b'HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found')
             try:
@@ -440,6 +459,7 @@ class Server:
         srv = await asyncio.start_server(self.handle, '127.0.0.1', port)
         log(f'VoiceID 電腦運算服務已啟動：http://localhost:{port}')
         log(f'通行金鑰：{self.cfg["key"]}（在手機網站的「電腦運算」設定填入）')
+        write_share_link(self.cfg)
         async with srv:
             await srv.serve_forever()
 
