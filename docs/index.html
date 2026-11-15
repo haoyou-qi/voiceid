@@ -14,7 +14,7 @@
     <title>聲紋辨識 VoiceID</title>
     <!-- ONNX Runtime（跑 CAM++ 聲紋模型）。檔案由 install.bat 複製到 public/ort/ -->
     <script src="./ort/ort.min.js"></script>
-    <link rel="stylesheet" href="./assets/main.css?v=5426b4a6" />
+    <link rel="stylesheet" href="./assets/main.css?v=4d091cad" />
   </head>
   <body>
     <main>
@@ -100,6 +100,11 @@
           <button id="clearCap">清除字幕</button>
         </div>
         <label class="switch">
+          <input type="checkbox" id="denoise" checked />
+          <b>降噪</b>（吵雜環境建議開啟，字幕較準；聲紋和環境音量會比較不準）
+        </label>
+        <p class="hint">iPhone 小技巧：開始聆聽後，從右上角滑出「控制中心」→ 點「麥克風模式」→ 選「人聲隔離」，吵雜環境的字幕會更準（要開著降噪才有效）。</p>
+        <label class="switch">
           <input type="checkbox" id="capOnly" />
           <b>只開字幕</b>（不做聲紋和環境偵測，比較省電）
         </label>
@@ -118,7 +123,7 @@
 
       <section>
         <h2>建立聲紋檔</h2>
-        <p class="hint">請對方用平常的語速自然說話 15 秒（念一段文章或自我介紹都可以）。<br />建檔和辨識要用<b>同一種音源</b>，準確度才會好。</p>
+        <p class="hint">請對方用平常的語速自然說話 15 秒（念一段文章或自我介紹都可以）。<br />建檔和辨識要用<b>同一種音源、同樣的降噪設定</b>，準確度才會好。</p>
         <div class="row">
           <input id="name" placeholder="名字，例如：Wanda" maxlength="12" />
           <button id="enroll">錄音建檔</button>
@@ -146,6 +151,6 @@
         </label>
       </section>
     </main>
-    <script type="module" src="./assets/main.js?v=5426b4a6"></script>
+    <script type="module" src="./assets/main.js?v=4d091cad"></script>
   </body>
 </html>

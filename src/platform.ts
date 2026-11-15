@@ -21,6 +21,7 @@ export interface Platform {
     onPcm16: (b: Uint8Array) => void,
     onFloat: (f: Float32Array) => void,
     deviceId?: string,
+    denoise?: boolean,
   ): Promise<void>;
   stopMic(): Promise<void>;
   /** 更新眼鏡畫面文字（瀏覽器模式只更新網頁上的預覽） */
@@ -154,7 +155,7 @@ function createBrowserPlatform(): Platform {
     sources: typeof navigator.mediaDevices?.getDisplayMedia === 'function' && !/iPhone|iPad|Android/i.test(navigator.userAgent)
       ? ['browser', 'tab']
       : ['browser'],
-    async startMic(source, _onPcm16, onFloat, deviceId) {
+    async startMic(source, _onPcm16, onFloat, deviceId, denoise = false) {
       // iPhone：AudioContext 一定要在「使用者點擊」當下建立並喚醒，等完權限視窗再建會被靜音
       try {
         ctx = new AudioContext({ sampleRate: 16000 }); // 能直接 16kHz 最好，跟眼鏡一致
@@ -174,10 +175,11 @@ function createBrowserPlatform(): Platform {
         }
       } else {
         stream = await navigator.mediaDevices.getUserMedia({
-          // 關掉瀏覽器的降噪 / 自動增益：它們會改變音色，影響聲紋
           audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
+            // 降噪開啟：讓手機系統做降噪 + 回音消除（iPhone 會啟用語音處理，控制中心可選「人聲隔離」），
+            // 吵雜環境字幕比較準；關閉：保留原始音色，聲紋比較準、環境音量也比較真實
+            echoCancellation: denoise,
+            noiseSuppression: denoise,
             autoGainControl: false,
             channelCount: 1,
             ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
