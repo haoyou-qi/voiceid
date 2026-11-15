@@ -31,8 +31,6 @@ let lastConf = 0;
 let quiet = true;
 let current: string | null = null; // 目前畫面上顯示的說話者
 let micId = '';
-let denoise = false; // iPhone 系統降噪：會把音樂、車聲壓掉，讓環境偵測判成「安靜」，所以預設關閉
-const DENOISE_KEY = 'voiceid.denoise.v2'; // v2：預設改成關閉（舊設定不沿用）
 let micDenoised = false; // 這次聆聽的麥克風有沒有開系統降噪
 let capOnlyOn = false; // 「只開字幕」模式進行中
 let asr: StreamingAsr | null = null; // 本機語音辨識
@@ -235,7 +233,8 @@ function ambientLine(): string {
 async function startMic() {
   if (micOn) return;
   // 用電腦運算時收原始聲音：電腦端的辨識模型用原始聲音最準，環境偵測也比較準
-  micDenoised = source === 'browser' && denoise && !(computeMode !== 'phone' && remote.ready);
+  // 麥克風一律收原始聲音：環境偵測、聲紋都在「降噪之前」分析；降噪只在電腦端用於字幕
+  micDenoised = false;
   await platform.startMic(
     source,
     (b) => feed(pcm16ToFloat(b)),
@@ -398,7 +397,6 @@ function updateButtons() {
   $<HTMLInputElement>('capOnly').disabled = micOn || capOnlyOn;
   $<HTMLSelectElement>('capEngine').disabled = micOn || capOnlyOn;
   $<HTMLSelectElement>('asrModel').disabled = micOn || capOnlyOn;
-  $<HTMLInputElement>('denoise').disabled = micOn || capOnlyOn;
   updateComputeBadge();
 }
 
@@ -802,15 +800,6 @@ async function boot() {
   const langSel = $<HTMLSelectElement>('lang');
   langSel.onchange = () => { captions.lang = langSel.value; };
   $('clearCap').onclick = () => captions.clear();
-  // 降噪開關
-  const dn = $<HTMLInputElement>('denoise');
-  try { denoise = localStorage.getItem(DENOISE_KEY) === '1'; } catch { /* 略過 */ }
-  dn.checked = denoise;
-  dn.onchange = () => {
-    denoise = dn.checked;
-    try { localStorage.setItem(DENOISE_KEY, denoise ? '1' : '0'); } catch { /* 略過 */ }
-    if (micOn) $('capStatus').textContent = '降噪設定會在下次「開始聆聽」時生效';
-  };
   // 眼鏡字幕大小
   const gSize = $<HTMLSelectElement>('glassSize');
   try { gSize.value = localStorage.getItem('voiceid.glassSize.v2') || '14'; } catch { /* 略過 */ }
