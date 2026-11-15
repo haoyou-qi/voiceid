@@ -14,7 +14,7 @@
     <title>聲紋辨識 VoiceID</title>
     <!-- ONNX Runtime（跑 CAM++ 聲紋模型）。檔案由 install.bat 複製到 public/ort/ -->
     <script src="./ort/ort.min.js"></script>
-    <link rel="stylesheet" href="./assets/main.css?v=4d091cad" />
+    <link rel="stylesheet" href="./assets/main.css?v=dd9b6909" />
   </head>
   <body>
     <main>
@@ -77,10 +77,33 @@
         <div class="row">
           <label>字幕引擎
             <select id="capEngine">
-              <option value="local">手機本機辨識（不用網路、iPhone / 眼鏡可用）</option>
+              <option value="local">本機辨識（手機或你的電腦，iPhone / 眼鏡可用）</option>
               <option value="browser">瀏覽器內建（電腦 Chrome 較準，需要網路）</option>
             </select>
           </label>
+        </div>
+        <div class="compute">
+          <div class="row">
+            <label>運算方式
+              <select id="computeMode">
+                <option value="auto">自動（電腦有開就用電腦，否則用手機）</option>
+                <option value="pc">只用電腦（電腦沒開時字幕暫停）</option>
+                <option value="phone">只用手機</option>
+              </select>
+            </label>
+            <span id="computeBadge" class="badge">手機運算</span>
+          </div>
+          <div id="remoteFields">
+            <div class="row">
+              <input id="remoteUrl" placeholder="電腦網址，例如 https://xxx.ts.net" autocomplete="off" autocapitalize="off" spellcheck="false" />
+            </div>
+            <div class="row">
+              <input id="remoteKey" placeholder="通行金鑰（電腦上顯示的那組）" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <button id="remoteTest">連線</button>
+            </div>
+            <div id="remoteState" class="hint">電腦運算：尚未設定</div>
+          </div>
+          <p class="hint">電腦運算：聲音傳到你家電腦，用更大、更準的模型辨識（吵雜環境錯字少一半以上，還會加標點），手機也比較省電。需要網路，每小時約用 100MB 流量；聲音只在電腦記憶體中處理，不會存檔。電腦沒開時會自動改回手機運算。</p>
         </div>
         <div class="row">
           <label>字幕語言（本機辨識）
@@ -101,7 +124,7 @@
         </div>
         <label class="switch">
           <input type="checkbox" id="denoise" checked />
-          <b>降噪</b>（吵雜環境建議開啟，字幕較準；聲紋和環境音量會比較不準）
+          <b>降噪</b>（只在手機運算時有效，吵雜環境建議開）
         </label>
         <p class="hint">iPhone 小技巧：開始聆聽後，從右上角滑出「控制中心」→ 點「麥克風模式」→ 選「人聲隔離」，吵雜環境的字幕會更準（要開著降噪才有效）。</p>
         <label class="switch">
@@ -151,6 +174,6 @@
         </label>
       </section>
     </main>
-    <script type="module" src="./assets/main.js?v=4d091cad"></script>
+    <script type="module" src="./assets/main.js?v=dd9b6909"></script>
   </body>
 </html>

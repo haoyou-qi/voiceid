@@ -83,3 +83,10 @@ button, select, input { min-height: 40px; } /* 手指好點 */
 .gate-card { width: 100%; max-width: 340px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
 .gate-card h2 { font-size: 22px; margin: 0; }
 .gate-card input { font-size: 18px; }
+
+/* 運算方式：電腦 / 手機 */
+.compute { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 6px 0 10px; }
+.compute input { flex: 1; min-width: 0; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 13px; font-weight: 700; background: var(--line); white-space: nowrap; }
+.badge.pc { background: #1f7a4d; color: #fff; }
+.badge.wait { background: #a86b00; color: #fff; }

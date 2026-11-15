@@ -12,6 +12,7 @@ import type { Profile } from './dsp/types';
 import { fromSentence, voteFrom, type TimelineItem } from './attribution';
 import { Captions, type Attribution } from './captions';
 import { detectPlatform, listMics, type MicSource, type Platform } from './platform';
+import { RemoteAsr, remoteSettings, type ComputeMode } from './remote';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ENROLL_SEC = 15;
@@ -44,6 +45,11 @@ const SENS_KEY = 'voiceid.ambientSens.v1';
 let ambient: AmbientMonitor = new AmbientMonitor(null);
 let amb: AmbientState | null = null; // 最新的環境狀態
 const captions = new Captions();
+// 電腦運算：連到自己電腦上的 VoiceID 服務；斷線就自動改回手機本機辨識
+const remote = new RemoteAsr();
+let computeMode: ComputeMode = remoteSettings.mode;
+let useRemote = false; // 這次聆聽目前是不是用電腦辨識
+let lastSceneKey = '';
 let filterStrangers = true; // 只顯示認識的人（濾掉陌生人）
 let lastStranger = false; // 最近一次判斷是不是陌生人
 /** 聲紋辨識的時間軸：給字幕「整句投票」用 */
@@ -174,7 +180,7 @@ function glassesText(): string {
 }
 function captionSupported() {
   // 本機辨識：任何音源都能用（眼鏡、手機、電腦、分頁）；瀏覽器內建：只能用瀏覽器自己的麥克風
-  if (captionEngine === 'local') return !!asr;
+  if (captionEngine === 'local') return !!asr || (computeMode !== 'phone' && !!remoteSettings.url);
   return platform?.kind === 'browser' && source === 'browser' && Captions.supported();
 }
 
@@ -210,7 +216,11 @@ document.addEventListener('visibilitychange', () => {
 function feed(f: Float32Array) {
   engine.pushFloat(f);
   if (engine.mode === 'listening') ambient.push(f);
-  if (asrOn) asr?.push(f); // 本機字幕跟聲紋、環境偵測共用同一份音訊
+  // 本機字幕跟聲紋、環境偵測共用同一份音訊；用電腦運算時手機就不跑辨識模型（省電）
+  if (asrOn) {
+    if (useRemote) remote.push(f);
+    else if (computeMode !== 'pc') asr?.push(f);
+  }
 }
 
 /** 眼鏡第二行：環境狀態（有警報時改成醒目提示） */
@@ -228,7 +238,8 @@ async function startMic() {
     (b) => feed(pcm16ToFloat(b)),
     (f) => feed(f),
     micId || undefined,
-    denoise,
+    // 用電腦運算時收原始聲音：電腦端的辨識模型用原始聲音最準，環境偵測也比較準
+    denoise && !(computeMode !== 'phone' && remote.ready),
   );
   micOn = true;
   void keepAwake(true);
@@ -249,7 +260,8 @@ async function toggleListening() {
     // 停止
     engine.stop();
     asrOn = false;
-    asr?.flush();
+    if (useRemote) remote.flush();
+    else asr?.flush();
     captions.stop();
     capOnlyOn = false;
     void keepAwake(false);
@@ -275,9 +287,12 @@ async function toggleListening() {
     if (captionSupported()) {
       captions.mode = captionEngine === 'local' ? 'local' : 'web';
       captions.start();
-      if (captionEngine === 'local' && asr) {
-        asr.reset();
+      if (captionEngine === 'local') {
+        asr?.reset();
+        remote.reset();
         asrOn = true;
+        useRemote = false;
+        chooseEngine();
       }
     } else {
       $('capStatus').textContent = captionEngine === 'browser' && !Captions.supported()
@@ -382,6 +397,7 @@ function updateButtons() {
   $<HTMLSelectElement>('capEngine').disabled = micOn || capOnlyOn;
   $<HTMLSelectElement>('asrModel').disabled = micOn || capOnlyOn;
   $<HTMLInputElement>('denoise').disabled = micOn || capOnlyOn;
+  updateComputeBadge();
 }
 
 async function refreshMics() {
@@ -439,13 +455,13 @@ captions.onChange = () => {
     .map((l) => `<div class="${l.stranger ? 'hint' : ''}">${capOnlyOn ? "" : `<b>${escapeHtml(whoLabel(l.speaker, l.stranger))}</b>：`}${escapeHtml(l.text).replace(/\n/g, '<br>')}</div>`)
     .join('') +
     (captions.interim && !ia.drop
-      ? `<div class="hint">${escapeHtml(whoLabel(ia.speaker, ia.stranger))}：${escapeHtml(captions.interim).replace(/\n/g, '<br>')}…</div>`
+      ? `<div class="hint">${capOnlyOn ? '' : `${escapeHtml(whoLabel(ia.speaker, ia.stranger))}：`}${escapeHtml(captions.interim).replace(/\n/g, '<br>')}…</div>`
       : '');
   box.scrollTop = box.scrollHeight;
   render();
 };
 captions.onError = (m) => { $('capStatus').textContent = m; };
-captions.onStatus = (m) => { $('capState').textContent = m; };
+captions.onStatus = (m) => { $('capState').textContent = useRemote ? m.replace('本機辨識聆聽中（不需網路）', '電腦辨識聆聽中') : m; };
 engine.onResult = (r) => {
   quiet = !r.best;
   if (r.best) {
@@ -493,6 +509,10 @@ function wireAmbient(tagErr: string) {
     : '';
   ambient.onUpdate = (st) => {
     amb = st;
+    // 告訴電腦現在的環境：有音樂時電腦會開 AI 降噪（人群吵雜時不開，實測反而變差）
+    const keys = [st.scene.includes('人聲吵雜') && 'crowd', st.scene.includes('有音樂') && 'music', st.scene.includes('車聲／機器聲') && 'traffic'].filter(Boolean) as string[];
+    const k = keys.join(',');
+    if (k !== lastSceneKey) { lastSceneKey = k; remote.scene(keys); }
     $('ambStatus').textContent = st.alert ? `⚠ ${st.alert}！注意周圍` : `${st.levelLabel}${st.scene.length ? '・' + st.scene.join('、') : ''}`;
     $('ambStatus').className = 'amb-status' + (st.alert ? ' alert' : ` lv${st.level}`);
     $('ambAdvice').textContent = st.alert ? '' : `建議：${st.advice}`;
@@ -532,8 +552,8 @@ async function loadAsr(id: AsrModelId): Promise<string> {
   $('capState').textContent = `字幕狀態：下載「${ASR_MODELS[id].label}」辨識模型中…（第一次較久，之後會快取）`;
   try {
     const next = await StreamingAsr.load(ASR_MODELS[id].base);
-    next.onPartial = (t) => captions.localPartial(t);
-    next.onFinal = (t) => captions.localFinal(t);
+    next.onPartial = (t) => { if (!useRemote) captions.localPartial(t); };
+    next.onFinal = (t) => { if (!useRemote) captions.localFinal(t); };
     next.onLag = (sec) => { $('capStatus').textContent = `手機處理速度跟不上（落後 ${sec.toFixed(1)} 秒），字幕會延遲`; };
     asr = next;
     $('capState').textContent = `字幕狀態：「${ASR_MODELS[id].label}」模型已就緒`;
@@ -566,6 +586,7 @@ async function setupCaptionEngine() {
     } else {
       asrModel = id;
       $('capStatus').textContent = '';
+      connectRemote(); // 電腦端也換成同一種語言
     }
   };
   const isPhoneOrGlasses = platform.kind === 'even' || /iPhone|iPad|Android/i.test(navigator.userAgent);
@@ -578,9 +599,9 @@ async function setupCaptionEngine() {
   // iPhone / iPad 的瀏覽器內建語音辨識實測沒有作用（Safari、Chrome 都一樣）→ 一律用本機辨識
   const isApple = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (isApple && asr) captionEngine = 'local';
-  if (captionEngine === 'local' && !asr) captionEngine = 'browser';
+  if (captionEngine === 'local' && !asr && computeMode === 'phone') captionEngine = 'browser';
   sel.value = captionEngine;
-  (sel.querySelector('option[value="local"]') as HTMLOptionElement).disabled = !asr;
+  (sel.querySelector('option[value="local"]') as HTMLOptionElement).disabled = !asr && computeMode === 'phone';
   const browserOpt = sel.querySelector('option[value="browser"]') as HTMLOptionElement;
   browserOpt.disabled = !Captions.supported() || platform.kind === 'even' || isApple;
   if (isApple) browserOpt.textContent = '瀏覽器內建（iPhone 不支援）';
@@ -589,6 +610,89 @@ async function setupCaptionEngine() {
     captionEngine = sel.value as 'local' | 'browser';
     try { localStorage.setItem(CAP_ENGINE_KEY, captionEngine); } catch { /* 略過 */ }
   };
+}
+
+// ---------- 運算方式（電腦 / 手機） ----------
+/** 依目前連線狀態決定字幕用電腦還是手機；聆聽中也可以隨時切換 */
+function chooseEngine() {
+  const want = computeMode !== 'phone' && remote.ready;
+  if (asrOn && want !== useRemote) {
+    if (want) {
+      asr?.flush(); // 手機上正在說的那句先收尾
+    } else {
+      if (captions.interim) captions.localFinal(captions.interim); // 電腦斷線：已經出現的字先保留
+      asr?.reset();
+    }
+  }
+  useRemote = want;
+  if (asrOn) $('capState').textContent = useRemote ? '字幕狀態：電腦辨識聆聽中' : computeMode === 'pc' ? '字幕狀態：等待電腦連線…' : '字幕狀態：本機辨識聆聽中（不需網路）';
+  updateComputeBadge();
+}
+
+function updateComputeBadge() {
+  const b = $('computeBadge');
+  if (computeMode === 'phone') { b.textContent = '手機運算'; b.className = 'badge'; return; }
+  if (remote.ready) { b.textContent = asrOn ? '電腦運算中' : '已連上電腦'; b.className = 'badge pc'; return; }
+  if (computeMode === 'pc') { b.textContent = '等待電腦'; b.className = 'badge wait'; return; }
+  b.textContent = asrOn && asr ? '手機運算中' : '手機運算';
+  b.className = 'badge';
+}
+
+function connectRemote() {
+  if (computeMode === 'phone') { remote.disconnect(); return; }
+  const url = remoteSettings.url, key = remoteSettings.key;
+  if (!url || !key) { remote.disconnect(); $('remoteState').textContent = '電腦運算：請填入電腦網址和通行金鑰'; return; }
+  remote.connect(url, key, asrModel, 'auto');
+}
+
+function wireCompute() {
+  try { const m = localStorage.getItem(ASR_MODEL_KEY) as AsrModelId; if (m && m in ASR_MODELS) asrModel = m; } catch { /* 略過 */ }
+  // 分享連結可以直接帶設定：…/voiceid/?pc=電腦網址&k=通行金鑰（填好後會從網址列移除）
+  try {
+    const q = new URLSearchParams(location.search);
+    const pc = q.get('pc'), k = q.get('k');
+    if (pc && k) {
+      remoteSettings.url = pc;
+      remoteSettings.key = k;
+      if (remoteSettings.mode === 'phone') remoteSettings.mode = 'auto';
+      computeMode = remoteSettings.mode;
+      q.delete('pc'); q.delete('k');
+      window.history.replaceState(null, '', location.pathname + (q.toString() ? `?${q}` : '') + location.hash);
+    }
+  } catch { /* 略過 */ }
+  const mode = $<HTMLSelectElement>('computeMode');
+  const url = $<HTMLInputElement>('remoteUrl');
+  const key = $<HTMLInputElement>('remoteKey');
+  mode.value = computeMode;
+  url.value = remoteSettings.url;
+  key.value = remoteSettings.key;
+  const showFields = () => { $('remoteFields').style.display = computeMode === 'phone' ? 'none' : ''; };
+  showFields();
+  mode.onchange = () => {
+    computeMode = mode.value as ComputeMode;
+    remoteSettings.mode = computeMode;
+    showFields();
+    connectRemote();
+    chooseEngine();
+  };
+  $('remoteTest').onclick = () => {
+    remoteSettings.url = url.value.trim();
+    remoteSettings.key = key.value.trim();
+    connectRemote();
+  };
+  remote.onPartial = (t) => { if (useRemote) captions.localPartial(t); };
+  remote.onFinal = (t, s, e) => { if (useRemote) captions.remoteFinal(t, s, e); };
+  remote.onLag = (sec) => { $('capStatus').textContent = `電腦處理速度跟不上或網路太慢（落後 ${sec.toFixed(1)} 秒）`; };
+  remote.onState = (st, msg) => {
+    const extra = st === 'ready'
+      ? `（${remote.info.sensevoice ? '高準確度整句辨識' : '串流辨識'}${remote.info.denoise ? '・有音樂時自動降噪' : ''}）`
+      : '';
+    $('remoteState').textContent = `電腦運算：${msg}${extra}`;
+    $('remoteState').className = st === 'error' ? 'hint warn' : 'hint';
+    chooseEngine();
+  };
+  connectRemote();
+  updateComputeBadge();
 }
 
 // ---------- 備份 / 還原 ----------
@@ -657,6 +761,7 @@ async function boot() {
   platform = await detectPlatform('VoiceID 啟動中…');
   source = platform.sources[0];
   $('platform').textContent = (platform.kind === 'even' ? 'Even Hub 模式' : '瀏覽器模式') + ' · ' + engine.backend.label;
+  wireCompute();
   await setupCaptionEngine(); // 要在知道平台（手機 / 眼鏡 / 電腦）之後才能決定預設字幕引擎
   $('engineNote').textContent = modelError ? `CAM++ 模型沒有載入（${modelError}），目前用備援方法，準確度較低。請重新執行 install.bat。` : '';
   if (engine.profiles.some((p) => p.kind !== engine.backend.kind))

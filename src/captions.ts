@@ -57,6 +57,15 @@ export class Captions {
     this.onChange();
   }
 
+  /** 電腦運算：一句話結束（電腦提供這句話的開始 / 結束時間，聲紋判斷更準） */
+  remoteFinal(text: string, startMs: number, endMs: number) {
+    if (!this.running && !text) return;
+    this.interim = '';
+    this.segStart = 0;
+    if (text) this.commit(text, startMs, endMs);
+    this.onChange();
+  }
+
   /** 正在說的這句話目前的歸屬（給畫面顯示用） */
   interimAttribution(): Attribution {
     return this.liveAttribute(this.segStart || Date.now(), Date.now());
@@ -156,13 +165,13 @@ export class Captions {
     }
   }
 
-  commit(text: string) {
-    const now = Date.now();
+  commit(text: string, startMs?: number, endMs?: number) {
+    const now = endMs ?? Date.now();
     // 沒抓到開始時間（辨識直接給最終結果）→ 用字數估計長度（中文大約每秒 4 個字）
-    const start = this.segStart || now - Math.max(1000, text.length * 250);
-    this.segStart = 0;
     // 說話到出現字幕大約有 0.5 秒延遲，開始時間往前推一點
-    const pending = this.attribute(start - 500, now).catch(() => this.liveAttribute(start - 500, now));
+    const start = startMs ?? (this.segStart || now - Math.max(1000, text.length * 250)) - 500;
+    this.segStart = 0;
+    const pending = this.attribute(start, now).catch(() => this.liveAttribute(start, now));
     this.commitQueue = this.commitQueue.then(async () => {
       const a = await pending;
       if (a.drop) return; // 陌生人：直接濾掉
