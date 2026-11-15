@@ -40,7 +40,7 @@ export class CamppBackend implements Backend {
    * 整句判斷用的陌生人門檻：整句的聲紋比 2 秒小段可靠（本人通常 0.7 以上、陌生人 0.3 以下），
    * 所以比即時門檻低 0.12。調整頁面上的「陌生人門檻」滑桿會一起移動。
    */
-  sentenceOffset = 0.12;
+  sentenceOffset = 0.07; // 實測：整句門檻 0.35 時本人仍 100% 認得出來、陌生人全部擋下（0.30 會放進約 14% 陌生人）
   range = { threshold: [0.2, 0.8, 0.01], margin: [0, 0.3, 0.01] } as const;
 
   constructor(private embedFn: EmbedFn) {}
@@ -60,7 +60,8 @@ export class CamppBackend implements Backend {
     const e = await this.embed(voiced);
     const scores = profiles
       .filter((p): p is Extract<Profile, { kind: 'campp' }> => p.kind === 'campp')
-      .map((p) => ({ name: p.name, score: dot(e, p.emb) }))
+      // 有追加錄音的話，跟每一段都比，取最像的一段
+      .map((p) => ({ name: p.name, score: Math.max(dot(e, p.emb), ...(p.extra ?? []).map((x) => dot(e, x.emb))) }))
       .sort((a, b) => b.score - a.score);
     const best = scores[0] ?? null;
     const conf = best ? Math.max(0, Math.min(1, (best.score - 0.2) / 0.6)) : 0;

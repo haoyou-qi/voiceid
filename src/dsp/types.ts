@@ -10,6 +10,8 @@ export type Profile =
       emb: number[]; // 192 維、已正規化的聲紋向量
       seconds: number;
       createdAt: string;
+      /** 追加錄音：同一個人在不同環境（吵雜、遠近、不同麥克風、說英文）多錄的幾段，辨識時取最像的一段 */
+      extra?: { emb: number[]; seconds: number; source: Source; createdAt: string }[];
     }
   | {
       kind: 'gmm';

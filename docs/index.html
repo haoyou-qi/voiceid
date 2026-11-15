@@ -14,7 +14,7 @@
     <title>聲紋辨識 VoiceID</title>
     <!-- ONNX Runtime（跑 CAM++ 聲紋模型）。檔案由 install.bat 複製到 public/ort/ -->
     <script src="./ort/ort.min.js"></script>
-    <link rel="stylesheet" href="./assets/main.css?v=0c669497" />
+    <link rel="stylesheet" href="./assets/main.css?v=8dc317e7" />
   </head>
   <body>
     <main>
@@ -142,7 +142,7 @@
 
       <section>
         <h2>建立聲紋檔</h2>
-        <p class="hint">請對方用平常的語速自然說話 15 秒（念一段文章或自我介紹都可以）。<br />建檔和辨識要用<b>同一種音源、同樣的降噪設定</b>，準確度才會好。</p>
+        <p class="hint">請對方用平常的語速自然說話 15 秒（念一段文章或自我介紹都可以）。<br />建檔和辨識要用<b>同一種音源</b>（手機或眼鏡麥克風），準確度才會好。<br /><b>想更準：</b>建好後按名字旁的「＋追加錄音」，在不同情況再各錄一段（例如吵雜的地方、離手機遠一點、說英文），每人最多 6 段，辨識時會取最像的一段。</p>
         <div class="row">
           <input id="name" placeholder="名字，例如：Wanda" maxlength="12" />
           <button id="enroll">錄音建檔</button>
@@ -170,6 +170,6 @@
         </label>
       </section>
     </main>
-    <script type="module" src="./assets/main.js?v=0c669497"></script>
+    <script type="module" src="./assets/main.js?v=8dc317e7"></script>
   </body>
 </html>

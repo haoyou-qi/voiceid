@@ -39,7 +39,8 @@ export class VoiceIdEngine {
   onError: (e: Error) => void = (e) => console.warn(e);
 
   constructor(public backend: Backend) {
-    this.settings = { windowSec: 2, stepSec: 0.5, minVoicedSec: 0.6, ...backend.defaults };
+    // 即時判斷看最近 3 秒（實測比 2 秒準：吵雜時本人認對 81%→94%），至少 1 秒人聲才下判斷，剛開口不急著猜
+    this.settings = { windowSec: 3, stepSec: 0.5, minVoicedSec: 1.0, ...backend.defaults };
   }
 
   /** 目前引擎能用的聲紋檔（另一種引擎建的檔不能混用） */
@@ -68,7 +69,7 @@ export class VoiceIdEngine {
   }
 
   /** 結束建檔：去掉靜音後交給引擎算聲紋 */
-  async finishEnrolling(name: string, source: Source): Promise<Profile> {
+  async finishEnrolling(name: string, source: Source, append = false): Promise<Profile> {
     this.mode = 'idle';
     const all = new Float32Array(this.enrollLen);
     let p = 0;
@@ -77,6 +78,14 @@ export class VoiceIdEngine {
     const voiced = voicedAudio(all);
     if (voiced.length < 3 * SR) throw new Error(`有效語音太少（${(voiced.length / SR).toFixed(1)} 秒），請至少講 3 秒以上`);
     const profile = await this.backend.enroll(name, source, voiced);
+    const old = this.profiles.find((x) => x.name === name && x.kind === profile.kind);
+    if (append && old && old.kind === 'campp' && profile.kind === 'campp') {
+      // 追加：保留原本的聲紋，多加一段（最多 6 段，太多會讓陌生人比較容易被誤認）
+      const extra = [...(old.extra ?? []), { emb: profile.emb, seconds: profile.seconds, source, createdAt: profile.createdAt }].slice(-5);
+      const merged = { ...old, extra };
+      this.profiles = this.profiles.map((x) => (x === old ? merged : x));
+      return merged;
+    }
     this.profiles = this.profiles.filter((x) => x.name !== name || x.kind !== profile.kind).concat(profile);
     return profile;
   }

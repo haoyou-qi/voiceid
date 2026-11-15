@@ -24,7 +24,7 @@ export function fromSentence(r: IdResult, sentenceThreshold: number | null, filt
  * 只算「判斷視窗的中心落在這句話裡」的結果，避免算到上一個人的尾巴。
  * 資訊太少 → 保留並標「？」，避免把自己的「好」「嗯」刪掉。
  */
-export function voteFrom(timeline: TimelineItem[], start: number, end: number, filter: boolean, windowMs = 2000): Attribution {
+export function voteFrom(timeline: TimelineItem[], start: number, end: number, filter: boolean, windowMs = 3000): Attribution {
   const rs = timeline.filter((x) => x.t - windowMs / 2 >= start && x.t - windowMs / 2 <= end);
   const counts = new Map<string, number>();
   for (const x of rs) if (x.name) counts.set(x.name, (counts.get(x.name) ?? 0) + 1);

@@ -212,12 +212,12 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /** 同一份音訊同時送給聲紋辨識和環境偵測 */
-/** 這個時間點是不是已建檔的人在說話（聲紋每 0.5 秒看最近 2 秒，所以每次結果往前涵蓋 2.3 秒） */
+/** 這個時間點是不是已建檔的人在說話（聲紋每 0.5 秒看最近 3 秒，所以每次結果往前涵蓋 3.3 秒） */
 function knownAt(t: number): boolean {
   for (let i = timeline.length - 1; i >= 0; i--) {
     const it = timeline[i];
     if (it.t < t - 200) break; // 更早的判斷涵蓋不到這個時間
-    if (it.name && !it.stranger && t >= it.t - 2300) return true;
+    if (it.name && !it.stranger && t >= it.t - 3300) return true;
   }
   return false;
 }
@@ -358,9 +358,13 @@ async function finishEnroll(name: string) {
   } else {
     try {
       $('enrollStatus').textContent = '分析聲紋中…';
-      const p = await engine.finishEnrolling(name, source);
+      const append = !!findCampp(name);
+      const p = await engine.finishEnrolling(name, source, append);
       saveProfiles();
-      $('enrollStatus').textContent = `✓ 已建立「${p.name}」，有效語音 ${p.seconds.toFixed(1)} 秒。建議按下方「備份聲紋檔」存一份，避免手機清掉資料後要重錄。`;
+      const n = p.kind === 'campp' ? 1 + (p.extra?.length ?? 0) : 1;
+      $('enrollStatus').textContent = append
+        ? `✓ 已追加到「${p.name}」，現在共 ${n} 段聲紋（最多 6 段，超過會替換最舊的追加段）。`
+        : `✓ 已建立「${p.name}」，有效語音 ${p.seconds.toFixed(1)} 秒。建議按下方「備份聲紋檔」存一份，避免手機清掉資料後要重錄。`;
       void requestPersist();
       $<HTMLInputElement>('name').value = '';
     } catch (e) {
@@ -373,6 +377,11 @@ async function finishEnroll(name: string) {
   render();
 }
 
+/** 已有這個名字的聲紋檔（CAM++）→ 錄音會變成「追加」 */
+function findCampp(name: string) {
+  return name ? engine.profiles.find((x) => x.name === name && x.kind === 'campp') : undefined;
+}
+
 // ---------- 畫面 ----------
 function renderProfiles() {
   const ul = $('profiles');
@@ -380,7 +389,20 @@ function renderProfiles() {
   for (const p of engine.profiles) {
     const li = document.createElement('li');
     const old = p.kind !== engine.backend.kind ? ' · <b class="warn">舊格式，請重新建檔</b>' : '';
-    li.innerHTML = `<span>${escapeHtml(p.name)} <small>· ${SOURCE_LABEL[p.source]} · ${p.seconds.toFixed(0)} 秒${old}</small></span>`;
+    const segs = p.kind === 'campp' ? 1 + (p.extra?.length ?? 0) : 1;
+    li.innerHTML = `<span>${escapeHtml(p.name)} <small>· ${SOURCE_LABEL[p.source]} · ${p.seconds.toFixed(0)} 秒${segs > 1 ? ` · 共 ${segs} 段` : ''}${old}</small></span>`;
+    if (p.kind === 'campp' && !old) {
+      const add = document.createElement('button');
+      add.textContent = '＋追加錄音';
+      add.title = '在不同環境（吵雜處、離手機遠一點、說英文）再錄一段，辨識會更準';
+      add.onclick = () => {
+        if (engine.mode === 'enrolling') return;
+        $<HTMLInputElement>('name').value = p.name;
+        updateButtons();
+        void toggleEnroll().catch((e) => alert(`無法啟動麥克風：${e.message ?? e}`));
+      };
+      li.append(add);
+    }
     const del = document.createElement('button');
     del.textContent = '刪除';
     del.onclick = () => {
@@ -401,7 +423,7 @@ function updateButtons() {
   listen.textContent = (micOn || capOnlyOn) && !enrolling ? '暫停聆聽' : '開始聆聽';
   listen.disabled = enrolling;
   const enroll = $<HTMLButtonElement>('enroll');
-  enroll.textContent = enrolling ? '結束建檔' : '錄音建檔';
+  enroll.textContent = enrolling ? '結束建檔' : findCampp($<HTMLInputElement>('name').value.trim()) ? '追加錄音' : '錄音建檔';
   enroll.className = enrolling ? 'rec' : '';
   $<HTMLSelectElement>('source').disabled = micOn || capOnlyOn;
   $<HTMLInputElement>('capOnly').disabled = micOn || capOnlyOn;
@@ -844,6 +866,7 @@ async function boot() {
 
   $('listen').onclick = () => toggleListening().catch((e) => alert(`無法啟動麥克風：${e.message ?? e}`));
   $('enroll').onclick = () => toggleEnroll().catch((e) => alert(`無法啟動麥克風：${e.message ?? e}`));
+  $<HTMLInputElement>('name').oninput = () => updateButtons(); // 打了已建檔的名字 → 按鈕變「追加錄音」
   platform.onTap(async (kind) => {
     if (kind === 'double') {
       await stopMic();
