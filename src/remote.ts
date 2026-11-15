@@ -122,11 +122,24 @@ export class RemoteAsr {
         clearTimeout(timeout);
         this.info.sensevoice = !!m.sensevoice;
         this.info.denoise = !!m.denoise;
+        // 每次（重新）連上，電腦端都從第 0 個樣本重新算起：手機這邊也要歸零，
+        // 否則斷線重連後字幕的時間會對不上，聲紋判斷不出是誰說的（會顯示「？」）
+        this.sent = 0;
+        this.marks = [];
         this.lastPong = Date.now();
         this.pingTimer = window.setInterval(() => this.ping(url, key), 5000);
         this.setState('ready', '已連上電腦');
       } else if (m.type === 'partial') this.onPartial(m.text);
-      else if (m.type === 'final') this.onFinal(m.text, this.toMs(m.start), this.toMs(m.end));
+      else if (m.type === 'final') {
+        let s = this.toMs(m.start), e = this.toMs(m.end);
+        const now = Date.now();
+        // 防呆：時間換算不合理（超過 25 秒前或在未來）→ 用字數估計（中文約每秒 4 個字）
+        if (!(e <= now + 500 && s >= now - 25_000 && s < e)) {
+          e = now - 700;
+          s = e - Math.max(1000, String(m.text).length * 250);
+        }
+        this.onFinal(m.text, s, e);
+      }
       else if (m.type === 'lag') this.onLag(m.sec);
       else if (m.type === 'pong') { this.lastPong = Date.now(); if (m.t) this.info.rttMs = Date.now() - m.t; }
       else if (m.type === 'error') {

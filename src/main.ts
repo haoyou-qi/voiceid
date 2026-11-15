@@ -31,8 +31,9 @@ let lastConf = 0;
 let quiet = true;
 let current: string | null = null; // 目前畫面上顯示的說話者
 let micId = '';
-let denoise = true; // 降噪（吵雜環境字幕較準）
-const DENOISE_KEY = 'voiceid.denoise.v1';
+let denoise = false; // iPhone 系統降噪：會把音樂、車聲壓掉，讓環境偵測判成「安靜」，所以預設關閉
+const DENOISE_KEY = 'voiceid.denoise.v2'; // v2：預設改成關閉（舊設定不沿用）
+let micDenoised = false; // 這次聆聽的麥克風有沒有開系統降噪
 let capOnlyOn = false; // 「只開字幕」模式進行中
 let asr: StreamingAsr | null = null; // 本機語音辨識
 let asrOn = false;
@@ -233,13 +234,14 @@ function ambientLine(): string {
 
 async function startMic() {
   if (micOn) return;
+  // 用電腦運算時收原始聲音：電腦端的辨識模型用原始聲音最準，環境偵測也比較準
+  micDenoised = source === 'browser' && denoise && !(computeMode !== 'phone' && remote.ready);
   await platform.startMic(
     source,
     (b) => feed(pcm16ToFloat(b)),
     (f) => feed(f),
     micId || undefined,
-    // 用電腦運算時收原始聲音：電腦端的辨識模型用原始聲音最準，環境偵測也比較準
-    denoise && !(computeMode !== 'phone' && remote.ready),
+    micDenoised,
   );
   micOn = true;
   void keepAwake(true);
@@ -518,7 +520,7 @@ function wireAmbient(tagErr: string) {
     $('ambAdvice').textContent = st.alert ? '' : `建議：${st.advice}`;
     const p = st.probs;
     $('ambDetail').textContent =
-      `環境音量約 ${st.floorDb.toFixed(0)} 分貝（估計${denoise && source === 'browser' ? '；降噪開啟時會偏低，僅供參考' : ''}）・音量起伏 ${st.fluct.toFixed(0)} dB` +
+      `環境音量約 ${st.floorDb.toFixed(0)} 分貝（估計${micDenoised ? '；目前開著降噪，音樂和背景聲會被壓低，可能誤判成安靜' : ''}）・音量起伏 ${st.fluct.toFixed(0)} dB` +
       (p ? `・說話 ${(p.speech * 100).toFixed(0)}%・人群 ${(p.crowd * 100).toFixed(0)}%・音樂 ${(p.music * 100).toFixed(0)}%・車聲 ${(p.traffic * 100).toFixed(0)}%` : '');
     if (st.scene.includes('有音樂') && !st.alert) $('ambAdvice').textContent += '（有音樂，字幕可能比較不準）';
     render();
@@ -802,7 +804,7 @@ async function boot() {
   $('clearCap').onclick = () => captions.clear();
   // 降噪開關
   const dn = $<HTMLInputElement>('denoise');
-  try { denoise = localStorage.getItem(DENOISE_KEY) !== '0'; } catch { /* 略過 */ }
+  try { denoise = localStorage.getItem(DENOISE_KEY) === '1'; } catch { /* 略過 */ }
   dn.checked = denoise;
   dn.onchange = () => {
     denoise = dn.checked;
