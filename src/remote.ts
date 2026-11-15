@@ -141,7 +141,13 @@ export class RemoteAsr {
         this.onFinal(m.text, s, e);
       }
       else if (m.type === 'lag') this.onLag(m.sec);
-      else if (m.type === 'pong') { this.lastPong = Date.now(); if (m.t) this.info.rttMs = Date.now() - m.t; }
+      else if (m.type === 'pong') {
+        this.lastPong = Date.now();
+        if (m.t) {
+          this.info.rttMs = Date.now() - m.t;
+          if (this.state === 'ready') this.onState('ready', `已連上電腦・網路來回約 ${this.info.rttMs} 毫秒${this.info.rttMs > 600 ? '（網路偏慢，字幕會比較慢出現）' : ''}`);
+        }
+      }
       else if (m.type === 'error') {
         clearTimeout(timeout);
         this.cleanup();

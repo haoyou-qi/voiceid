@@ -6,6 +6,7 @@
 # 只需要 Python + numpy + onnxruntime（不需要其他套件）。
 import asyncio
 import base64
+import collections
 import concurrent.futures as cf
 import hashlib
 import json
@@ -77,12 +78,12 @@ def find(paths, must):
 class Models:
     def __init__(self):
         cpu = os.cpu_count() or 4
-        self.threads = max(1, min(4, cpu // 2))
+        self.threads = max(2, min(8, cpu - 1))  # 整句辨識一陣一陣的，多用幾個核心等待比較短
         self.asr = {}
         for k, paths in ASR_BASES.items():
             p = find(paths, 'asr_config.json')
             if p:
-                self.asr[k] = V.StreamingAsr(p, threads=2)
+                self.asr[k] = V.StreamingAsr(p, threads=1)  # 實測 1 和 2 個執行緒一樣快
                 log(f'字幕模型 {k}：{p}')
         if not self.asr:
             raise SystemExit('找不到字幕模型：請先在 g2-voiceid 資料夾執行 install.bat')
@@ -110,9 +111,7 @@ class Session:
         self.scene = set()
         self.dn = V.Denoiser(share=models.dn) if models.dn else None
         self.q = queue.Queue()
-        self.raw = np.zeros(0, np.float32)  # 最近 30 秒原始聲音（整句重新辨識用），只在記憶體
-        self.enh = np.zeros(0, np.float32)
-        self.base = 0  # self.raw[0] 是第幾個樣本
+        self.chunks = collections.deque()  # 最近 30 秒原始聲音 [(起始樣本, 聲音)]（整句重新辨識用），只在記憶體
         self.received = 0
         self.sv_pool = cf.ThreadPoolExecutor(max_workers=1)  # 一個人的字幕依序完成
         self.alive = True
@@ -156,44 +155,47 @@ class Session:
                     continue
                 if item == 'reset':
                     self.asr.reset()
-                    if self.dn:
-                        self.dn.reset()
                     continue
                 x = np.frombuffer(item, np.int16).astype(np.float32) / 32768
+                self.chunks.append((self.received, x))
                 self.received += len(x)
-                y = self.dn.push(x) if self.dn else x  # 一直跑降噪，切換時才不會有斷點
-                if len(y) < len(x):
-                    y = np.concatenate([np.zeros(len(x) - len(y), np.float32), y])
-                self.raw = np.concatenate([self.raw, x])
-                self.enh = np.concatenate([self.enh, y[: len(x)]])
-                if len(self.raw) > 30 * SR:
-                    cut = len(self.raw) - 30 * SR
-                    self.raw, self.enh, self.base = self.raw[cut:], self.enh[cut:], self.base + cut
+                while self.chunks and self.chunks[0][0] < self.received - 30 * SR:
+                    self.chunks.popleft()
                 self.asr.push(x)  # 串流字幕一律用原始聲音（實測降噪後的聲音會讓串流模型錯更多）
                 lag = self.q.qsize() * len(x) / SR
                 if lag > 2 and time.time() - last_lag > 3:
                     last_lag = time.time()
                     self.send({'type': 'lag', 'sec': round(lag, 1)})
+                    log(f'⚠ 電腦處理跟不上，落後 {lag:.1f} 秒')
             except Exception as e:  # 單一錯誤不要讓整個連線掛掉
                 log('處理錯誤：', e)
 
     def _on_final(self, text, start, end):
         end = min(end, self.received)
-        s, e = max(0, start - self.base), max(0, end - self.base)
+        parts = [c[max(0, start - n):max(0, end - n)] for n, c in self.chunks if n + len(c) > start and n < end]
+        seg = np.concatenate(parts) if parts else np.zeros(0, np.float32)
         dn = self.denoise_on()
-        # 降噪時把「原始 + 降噪後」各一半混合再辨識：比只用降噪後的聲音少很多失真造成的錯字
-        seg = (0.5 * self.raw[s:e] + 0.5 * self.enh[s:e]) if dn else self.raw[s:e].copy()
+        t_final = time.time()
 
         def job():
+            nonlocal seg
             best = text
+            t0 = time.time()
             if self.m.sv is not None and len(seg) > 0.4 * SR:
                 try:
+                    if dn and self.dn:
+                        # 只在需要時才降噪（只處理這一句），平常不浪費電腦資源；
+                        # 「原始 + 降噪後」各一半混合再辨識，比只用降噪後的聲音少很多失真造成的錯字
+                        seg = 0.5 * seg + 0.5 * self.dn.process(seg)
                     with self.m.sv_lock:
                         t = self.m.sv(seg, self.lang)
                     if has_words(t):  # 只有標點（雜音被當成一句話）就不採用
                         best = split_lines(t)
                 except Exception as ex:
                     log('整句辨識錯誤：', ex)
+            took = time.time() - t0
+            if took > 1.5 or time.time() - t_final > 3:
+                log(f'⚠ 整句辨識較慢：句長 {len(seg) / SR:.1f} 秒、辨識 {took:.1f} 秒、等待 {t0 - t_final:.1f} 秒')
             if self.alive and has_words(best):
                 self.send({'type': 'final', 'text': best, 'stream': text, 'start': start, 'end': end, 'denoise': dn})
 
