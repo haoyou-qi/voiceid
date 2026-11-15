@@ -1,6 +1,12 @@
 @echo off
 rem 找 Python（Anaconda / 一般安裝都可以），結果放在 PY 變數
 set "PY="
+rem 安裝後會有專用的獨立環境（.venv），優先使用
+if exist "%~dp0.venv\Scripts\python.exe" (
+  set "PY=%~dp0.venv\Scripts\python.exe"
+  goto :eof
+)
+if "%~1"=="venv" goto :eof
 if exist "%~dp0python_path.txt" (
   set /p PY=<"%~dp0python_path.txt"
 )

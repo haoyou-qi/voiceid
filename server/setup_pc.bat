@@ -14,14 +14,19 @@ if not defined PY (
 )
 echo [1/3] 使用 Python：%PY%
 echo.
-echo [2/3] 安裝 onnxruntime、numpy...
-"%PY%" -m pip install --upgrade onnxruntime numpy
-if errorlevel 1 (
-  echo.
-  echo 沒有權限安裝到系統資料夾，改成只安裝給目前的使用者（--user）...
-  "%PY%" -m pip install --user --upgrade onnxruntime numpy
+echo [2/3] 建立 VoiceID 專用的獨立環境，安裝 onnxruntime、numpy...
+echo       （放在 server\.venv，不會動到電腦原本的 Python，也不需要系統管理員權限）
+if not exist "%~dp0.venv\Scripts\python.exe" (
+  "%PY%" -m venv "%~dp0.venv"
 )
-"%PY%" -c "import onnxruntime, numpy"
+if not exist "%~dp0.venv\Scripts\python.exe" (
+  echo 建立獨立環境失敗，請把上面的錯誤訊息截圖給 Claude。
+  pause
+  exit /b 1
+)
+set "PY=%~dp0.venv\Scripts\python.exe"
+"%PY%" -m pip install --disable-pip-version-check --upgrade onnxruntime numpy
+"%PY%" -c "import onnxruntime, numpy; print('OK onnxruntime', onnxruntime.__version__)"
 if errorlevel 1 (
   echo.
   echo 套件安裝失敗，請把上面的錯誤訊息截圖給 Claude。
