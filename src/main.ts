@@ -1,6 +1,7 @@
 declare const __BUILD__: string; // 打包時填入（用來確認手機拿到的是不是新版）
 import './style.css';
 import { requirePasscode } from './passcode';
+import { exportBackup, inAppBrowserName, loadProfilesFromStorage, readBackup, requestPersist, saveProfilesToStorage } from './store';
 import { VoiceIdEngine } from './dsp/engine';
 import { CamppBackend, loadCamppEmbedder } from './dsp/campp';
 import { GmmBackend } from './dsp/speaker';
@@ -59,16 +60,17 @@ captions.attribute = async (start: number, end: number): Promise<Attribution> =>
 const whoLabel = (speaker: string | null, stranger: boolean) => (capOnlyOn ? '' : stranger ? '陌生人' : speaker ?? '？');
 
 // ---------- 儲存（localStorage 在少數環境會丟錯，所以全部包 try） ----------
-function loadProfiles() {
+async function loadProfiles() {
+  // localStorage 被清掉時，會從 IndexedDB 的那一份找回來
+  engine.profiles = await loadProfilesFromStorage(STORE_KEY);
   try {
-    // 舊版檔案沒有 kind 欄位，都是 GMM 建的
-    engine.profiles = (JSON.parse(localStorage.getItem(STORE_KEY) || '[]') as Profile[]).map((p) => ({ ...p, kind: p.kind ?? 'gmm' }) as Profile);
     Object.assign(engine.settings, JSON.parse(localStorage.getItem(SETTINGS_KEY + engine.backend.kind) || '{}'));
   } catch { /* 第一次使用或無法讀取 */ }
+  if (engine.profiles.length) void saveProfilesToStorage(STORE_KEY, engine.profiles); // 補回另一份
 }
 function saveProfiles() {
+  void saveProfilesToStorage(STORE_KEY, engine.profiles);
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(engine.profiles));
     localStorage.setItem(SETTINGS_KEY + engine.backend.kind, JSON.stringify(engine.settings));
   } catch { /* 無法儲存時只保留在記憶體 */ }
 }
@@ -329,7 +331,8 @@ async function finishEnroll(name: string) {
       $('enrollStatus').textContent = '分析聲紋中…';
       const p = await engine.finishEnrolling(name, source);
       saveProfiles();
-      $('enrollStatus').textContent = `✓ 已建立「${p.name}」，有效語音 ${p.seconds.toFixed(1)} 秒`;
+      $('enrollStatus').textContent = `✓ 已建立「${p.name}」，有效語音 ${p.seconds.toFixed(1)} 秒。建議按下方「備份聲紋檔」存一份，避免手機清掉資料後要重錄。`;
+      void requestPersist();
       $<HTMLInputElement>('name').value = '';
     } catch (e) {
       engine.stop();
@@ -584,6 +587,42 @@ async function setupCaptionEngine() {
   };
 }
 
+// ---------- 備份 / 還原 ----------
+function wireBackup() {
+  $('backup').onclick = async () => {
+    if (!engine.profiles.length) return alert('目前沒有聲紋檔可以備份');
+    const r = await exportBackup(engine.profiles);
+    $('backupMsg').textContent =
+      r === 'shared' ? '✓ 已產生備份檔（請存到「檔案」或傳 LINE 給自己保存）'
+      : r === 'downloaded' ? '✓ 備份檔已下載'
+      : '已取消';
+  };
+  const input = $<HTMLInputElement>('restoreFile');
+  $('restore').onclick = () => input.click();
+  input.onchange = async () => {
+    const f = input.files?.[0];
+    input.value = '';
+    if (!f) return;
+    try {
+      const list = await readBackup(f);
+      // 合併：同名同類型的以備份檔為準
+      const key = (p: Profile) => `${p.kind}:${p.name}`;
+      const incoming = new Set(list.map(key));
+      engine.profiles = engine.profiles.filter((p) => !incoming.has(key(p))).concat(list);
+      saveProfiles();
+      void requestPersist();
+      renderProfiles();
+      render();
+      $('backupMsg').textContent = `✓ 已還原 ${list.length} 個聲紋檔：${list.map((p) => p.name).join('、')}`;
+    } catch (e) {
+      $('backupMsg').textContent = `還原失敗：${(e as Error).message}`;
+    }
+  };
+  // 在 LINE / FB / IG 裡開啟：資料容易被清掉，提醒改用 Safari / Chrome
+  const app = inAppBrowserName();
+  if (app) $('inAppWarn').textContent = `你現在是在 ${app} 裡開啟，聲紋檔容易消失、麥克風也可能不能用。請點右上角選單，選「用 Safari（或預設瀏覽器）開啟」。`;
+}
+
 // ---------- 啟動 ----------
 async function boot() {
   $('ver').textContent = `版本 ${__BUILD__}`;
@@ -608,7 +647,9 @@ async function boot() {
     console.warn('環境聲音模型載入失敗，只提供吵雜程度：', e);
   }
   wireAmbient(tagErr);
-  loadProfiles();
+  await loadProfiles();
+  wireBackup();
+  renderProfiles(); // 聲紋檔清單先顯示，不用等其他模型載完
   platform = await detectPlatform('VoiceID 啟動中…');
   source = platform.sources[0];
   $('platform').textContent = (platform.kind === 'even' ? 'Even Hub 模式' : '瀏覽器模式') + ' · ' + engine.backend.label;

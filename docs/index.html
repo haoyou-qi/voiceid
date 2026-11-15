@@ -14,7 +14,7 @@
     <title>聲紋辨識 VoiceID</title>
     <!-- ONNX Runtime（跑 CAM++ 聲紋模型）。檔案由 install.bat 複製到 public/ort/ -->
     <script src="./ort/ort.min.js"></script>
-    <link rel="stylesheet" href="./assets/main.css?v=32f5f500" />
+    <link rel="stylesheet" href="./assets/main.css?v=5426b4a6" />
   </head>
   <body>
     <main>
@@ -23,6 +23,7 @@
         <span id="platform" class="tag">偵測中…</span>
       </header>
       <div id="ver" class="hint" style="margin-top:-8px"></div>
+      <div id="inAppWarn" class="hint warn"></div>
       <div id="engineNote" class="hint warn"></div>
 
       <section>
@@ -124,6 +125,13 @@
         </div>
         <div id="enrollStatus" class="hint"></div>
         <ul id="profiles"></ul>
+        <div class="row" style="margin-top:8px">
+          <button id="backup">備份聲紋檔</button>
+          <button id="restore">從備份還原</button>
+          <input id="restoreFile" type="file" accept=".json,application/json" hidden />
+        </div>
+        <div id="backupMsg" class="hint"></div>
+        <p class="hint">聲紋檔只存在這支手機的這個瀏覽器裡。換瀏覽器（例如從 Claude、LINE 裡打開 vs. Safari）、清除網站資料，或 iPhone 自動清理時都可能消失。建好檔後請按「備份聲紋檔」，存到「檔案」或傳 LINE 給自己；消失時按「從備份還原」選那個檔案即可。</p>
       </section>
 
       <section>
@@ -138,6 +146,6 @@
         </label>
       </section>
     </main>
-    <script type="module" src="./assets/main.js?v=32f5f500"></script>
+    <script type="module" src="./assets/main.js?v=5426b4a6"></script>
   </body>
 </html>
