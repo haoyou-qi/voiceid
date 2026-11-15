@@ -203,6 +203,41 @@ def split_lines(t):
     return out.strip()
 
 
+# ---------------------------------------------------------------- 防止有人一直猜金鑰
+class Guard:
+    """同一個來源 10 分鐘內錯 5 次 → 封鎖 30 分鐘；全部來源加起來錯很多次 → 每次錯誤都要等比較久。
+    金鑰正確的人（你和朋友）不受影響。"""
+
+    WINDOW, LIMIT, BLOCK = 600, 5, 1800
+
+    def __init__(self):
+        self.fails = {}  # 來源 → [時間…]
+        self.block_until = {}
+        self.all_fails = []
+
+    def blocked(self, src):
+        t = self.block_until.get(src)
+        if t and t > time.time():
+            return True
+        self.block_until.pop(src, None)
+        return False
+
+    def fail(self, src):
+        now = time.time()
+        self.all_fails = [t for t in self.all_fails if now - t < self.WINDOW] + [now]
+        lst = [t for t in self.fails.get(src, []) if now - t < self.WINDOW] + [now]
+        self.fails[src] = lst
+        if len(self.fails) > 1000:  # 避免記憶體被塞爆
+            self.fails = {src: lst}
+        if len(lst) >= self.LIMIT and src not in ('127.0.0.1', '::1'):
+            self.block_until[src] = now + self.BLOCK
+            log(f'⚠ 有人連續輸入錯誤金鑰，已封鎖 30 分鐘（來源 {src}）')
+        else:
+            log(f'⚠ 有人用錯誤的金鑰嘗試連線（10 分鐘內共 {len(self.all_fails)} 次）')
+        # 錯誤次數越多，回應越慢（最多 10 秒）；正確金鑰不會等
+        return min(10.0, 1.0 + 0.5 * len(self.all_fails))
+
+
 # ---------------------------------------------------------------- 最精簡的 WebSocket（不用安裝其他套件）
 GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
@@ -242,9 +277,9 @@ class Server:
         self.cfg = cfg
         self.models = Models()
         self.sessions = set()
+        self.guard = Guard()
 
     async def handle(self, r, w):
-        peer = 'tunnel'
         try:
             req = await asyncio.wait_for(r.readuntil(b'\r\n\r\n'), 10)
         except Exception:
@@ -257,18 +292,16 @@ class Server:
             if ':' in ln:
                 k, v = ln.split(':', 1)
                 hdr[k.strip().lower()] = v.strip()
-        if hdr.get('upgrade', '').lower() != 'websocket':
-            body = json.dumps({'ok': True, 'service': 'VoiceID', 'version': VERSION, 'sessions': len(self.sessions)}).encode()
-            if path.startswith('/health'):
-                ctype = 'application/json'
-            else:
-                ctype = 'text/html; charset=utf-8'
-                body = ('<meta charset=utf-8><h2>VoiceID 電腦運算服務運作中</h2>'
-                        f'<p>目前連線人數：{len(self.sessions)}</p>').encode()
-            w.write(b'HTTP/1.1 200 OK\r\nContent-Type: ' + ctype.encode() + b'\r\nAccess-Control-Allow-Origin: *\r\n'
-                    b'Content-Length: ' + str(len(body)).encode() + b'\r\nConnection: close\r\n\r\n' + body)
-            await w.drain()
-            w.close()
+        # 經過 Tailscale 時，真正的來源 IP 在 X-Forwarded-For；沒有的話就當作同一個來源
+        src = (hdr.get('x-forwarded-for', '').split(',')[0].strip()
+               or (w.get_extra_info('peername') or ('?',))[0])
+        if hdr.get('upgrade', '').lower() != 'websocket' or path.split('?')[0] != '/ws' or self.guard.blocked(src):
+            # 一般網頁請求、其他路徑、被封鎖的來源：一律回「找不到」，不透露這是什麼服務
+            w.write(b'HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found')
+            try:
+                await w.drain()
+            finally:
+                w.close()
             return
         acc = base64.b64encode(hashlib.sha1((hdr.get('sec-websocket-key', '') + GUID).encode()).digest()).decode()
         w.write(('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
@@ -293,7 +326,8 @@ class Server:
         buf, buf_op = b'', 0
         try:
             while True:
-                fin, op, data = await asyncio.wait_for(read_frame(r), 60)
+                # 連上後 10 秒內要送出金鑰，之後 60 秒沒有任何訊息就斷線
+                fin, op, data = await asyncio.wait_for(read_frame(r), 60 if sess else 10)
                 if op == 0:
                     buf += data
                     if not fin:
@@ -316,6 +350,7 @@ class Server:
                         send({'type': 'pong', 't': msg.get('t')})
                     elif t == 'hello':
                         if not secrets.compare_digest(str(msg.get('key', '')), self.cfg['key']):
+                            await asyncio.sleep(self.guard.fail(src))  # 錯越多次等越久，讓人沒辦法一直試
                             send({'type': 'error', 'code': 'key', 'message': '通行金鑰不正確'})
                             await asyncio.sleep(0.2)
                             break
