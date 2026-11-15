@@ -3,3 +3,4 @@ models/
 python_path.txt
 __pycache__/
 .venv/
+tailscale_report.txt
