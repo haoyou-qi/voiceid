@@ -111,6 +111,7 @@ class Session:
         self.scene = set()
         self.dn = V.Denoiser(share=models.dn) if models.dn else None
         self.q = queue.Queue()
+        self.asr_base = 0  # 串流字幕模型的第 0 個樣本 = 全部收到的第幾個樣本
         self.chunks = collections.deque()  # 最近 30 秒原始聲音 [(起始樣本, 聲音)]（整句重新辨識用），只在記憶體
         self.received = 0
         self.sv_pool = cf.ThreadPoolExecutor(max_workers=1)  # 一個人的字幕依序完成
@@ -138,8 +139,19 @@ class Session:
         elif msg.get('type') == 'reset':
             self.q.put('reset')
 
+    def _reset_asr(self):
+        # 串流字幕模型重新開始時，它的時間從 0 算起：記住對應到第幾個樣本，字幕時間才對得上
+        self.asr.reset()
+        self.asr_base = self.received
+
     def close(self):
         self.alive = False
+        # 手機斷線：還沒處理的聲音直接丟掉，不要在背景繼續佔用電腦
+        try:
+            while True:
+                self.q.get_nowait()
+        except queue.Empty:
+            pass
         self.q.put(None)
         self.sv_pool.shutdown(wait=False, cancel_futures=True)
 
@@ -147,14 +159,30 @@ class Session:
         last_lag = 0.0
         while True:
             item = self.q.get()
-            if item is None:
+            if item is None or not self.alive:
                 return
+            # 電腦跟不上（落後超過 4 秒）：丟掉積壓的舊聲音，直接跳到最新的，字幕才不會越來越慢
+            if isinstance(item, bytes) and self.q.qsize() > 40:
+                dropped = 0
+                while self.q.qsize() > 5:
+                    nxt = self.q.get_nowait()
+                    if not isinstance(nxt, bytes):
+                        if nxt is None:
+                            return
+                        continue
+                    dropped += len(nxt) // 2
+                    self.chunks.append((self.received, np.frombuffer(nxt, np.int16).astype(np.float32) / 32768))
+                    self.received += len(nxt) // 2
+                self.asr.flush()
+                self._reset_asr()
+                log(f'⚠ 電腦處理跟不上，略過 {dropped / SR:.1f} 秒的聲音以追上即時')
+                self.send({'type': 'lag', 'sec': round(dropped / SR, 1)})
             try:
                 if item == 'flush':
                     self.asr.flush()
                     continue
                 if item == 'reset':
-                    self.asr.reset()
+                    self._reset_asr()
                     continue
                 x = np.frombuffer(item, np.int16).astype(np.float32) / 32768
                 self.chunks.append((self.received, x))
@@ -171,6 +199,7 @@ class Session:
                 log('處理錯誤：', e)
 
     def _on_final(self, text, start, end):
+        start, end = start + self.asr_base, end + self.asr_base
         end = min(end, self.received)
         parts = [c[max(0, start - n):max(0, end - n)] for n, c in self.chunks if n + len(c) > start and n < end]
         seg = np.concatenate(parts) if parts else np.zeros(0, np.float32)
@@ -196,10 +225,16 @@ class Session:
             took = time.time() - t0
             if took > 1.5 or time.time() - t_final > 3:
                 log(f'⚠ 整句辨識較慢：句長 {len(seg) / SR:.1f} 秒、辨識 {took:.1f} 秒、等待 {t0 - t_final:.1f} 秒')
-            if self.alive and has_words(best):
+            if not self.alive:
+                return
+            if has_words(best):
                 self.send({'type': 'final', 'text': best, 'stream': text, 'start': start, 'end': end, 'denoise': dn})
 
-        self.sv_pool.submit(job)
+        if self.alive:
+            try:
+                self.sv_pool.submit(job)
+            except RuntimeError:  # 連線剛好關閉
+                pass
 
 
 def has_words(t):
