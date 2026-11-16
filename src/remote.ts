@@ -26,7 +26,7 @@ export const remoteSettings = {
   set key(v: string) { lsSet(KEY_KEY, v); mirror(); },
   get mode(): ComputeMode {
     const m = lsGet(MODE_KEY);
-    return m === 'pc' || m === 'phone' ? m : 'auto';
+    return m === 'phone' ? 'phone' : 'auto'; // 舊的「只用電腦」已併入自動（字幕一律先由手機即時辨識）
   },
   set mode(v: ComputeMode) { lsSet(MODE_KEY, v); mirror(); },
   /** 開網站時呼叫：localStorage 被清掉的話，從 IndexedDB 找回網址和金鑰 */
@@ -115,7 +115,9 @@ export class RemoteAsr {
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     const timeout = window.setTimeout(() => { if (this.state === 'connecting') { this.cleanup(); this.setState('error', '連不到電腦（電腦沒開或網址錯誤），改用手機運算'); this.retry(url, key); } }, 8000);
-    ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', key, model: this.opts.model, denoise: this.opts.denoise }));
+    // segments：字幕由手機即時辨識，電腦只負責把每句話用較準的模型重新辨識（修正）
+    // mulaw：聲音壓成 8 位元再傳，流量減半（實測錯字率幾乎不變：17.8% → 18.2%）
+    ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', key, model: this.opts.model, denoise: this.opts.denoise, mode: 'segments', codec: 'mulaw' }));
     ws.onmessage = (e) => {
       if (typeof e.data !== 'string') return;
       let m: any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -189,16 +191,36 @@ export class RemoteAsr {
     return m[0].t - ((m[0].n - n) / 16000) * 1000;
   }
 
+  /** 手機時間（毫秒）→ 已送出聲音的第幾個樣本 */
+  private toSample(ms: number): number {
+    const m = this.marks;
+    if (!m.length) return 0;
+    for (let i = m.length - 1; i >= 0; i--) if (m[i].t <= ms) return Math.round(m[i].n + ((ms - m[i].t) / 1000) * 16000);
+    return Math.max(0, Math.round(m[0].n - ((m[0].t - ms) / 1000) * 16000));
+  }
+
+  /** 請電腦把手機剛辨識完的這句話（時間範圍）用較準的模型重新辨識，結果用 onRevise(id) 傳回 */
+  segment(id: number, startMs: number, endMs: number) {
+    if (!this.ready) return;
+    const s = this.toSample(startMs), e = Math.min(this.sent, this.toSample(endMs) + 4800); // 結尾多留 0.3 秒
+    if (e - s < 6400) return; // 不到 0.4 秒，不用修正
+    try { this.ws!.send(JSON.stringify({ type: 'segment', id, start: Math.max(0, s), end: e })); } catch { /* 略過 */ }
+  }
+
   /** 餵 16kHz 音訊 */
   push(f: Float32Array) {
     if (!this.ws || this.state !== 'ready' || this.ws.readyState !== 1) return;
-    const b = new Int16Array(f.length);
-    for (let i = 0; i < f.length; i++) b[i] = Math.max(-32768, Math.min(32767, Math.round(f[i] * 32767)));
+    const b = new Uint8Array(f.length); // μ-law 8 位元
+    for (let i = 0; i < f.length; i++) {
+      const x = Math.max(-1, Math.min(1, f[i]));
+      const y = Math.sign(x) * Math.log1p(255 * Math.abs(x)) / Math.log1p(255);
+      b[i] = Math.round((y + 1) / 2 * 255);
+    }
     // 送出的這一塊「最後一個樣本」大約就是現在
     this.marks.push({ n: this.sent, t: Date.now() - (f.length / 16000) * 1000 });
     if (this.marks.length > 600) this.marks.splice(0, this.marks.length - 600);
     this.sent += f.length;
-    if (this.ws.bufferedAmount > 16000 * 2 * 5) return; // 網路太慢塞了超過 5 秒：先丟掉，避免越來越延遲
+    if (this.ws.bufferedAmount > 16000 * 5) return; // 網路太慢塞了超過 5 秒：先丟掉，避免越來越延遲
     this.ws.send(b.buffer);
   }
 

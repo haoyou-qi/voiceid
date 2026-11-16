@@ -14,7 +14,7 @@
     <title>聲紋辨識 VoiceID</title>
     <!-- ONNX Runtime（跑 CAM++ 聲紋模型）。檔案由 install.bat 複製到 public/ort/ -->
     <script src="./ort/ort.min.js"></script>
-    <link rel="stylesheet" href="./assets/main.css?v=8dc317e7" />
+    <link rel="stylesheet" href="./assets/main.css?v=e1a27cf7" />
   </head>
   <body>
     <main>
@@ -86,8 +86,7 @@
           <div class="row">
             <label>運算方式
               <select id="computeMode">
-                <option value="auto">自動（電腦有開就用電腦，否則用手機）</option>
-                <option value="pc">只用電腦（電腦沒開時字幕暫停）</option>
+                <option value="auto">手機即時辨識＋電腦逐句修正（電腦沒開時只用手機）</option>
                 <option value="phone">只用手機</option>
               </select>
             </label>
@@ -103,7 +102,7 @@
             </div>
             <div id="remoteState" class="hint">電腦運算：尚未設定</div>
           </div>
-          <p class="hint">電腦運算：聲音傳到你家電腦，用更大、更準的模型辨識（吵雜環境錯字少一半以上，還會加標點），手機也比較省電。需要網路，每小時約用 100MB 流量；聲音只在電腦記憶體中處理，不會存檔。電腦沒開時會自動改回手機運算。</p>
+          <p class="hint">字幕一律先由手機即時辨識（最快、不受網路影響）；連上你家電腦時，每句話說完，電腦會用更大、更準的模型重新辨識，幾秒內把這句換成更正確、有標點的版本（吵雜環境錯字少一半以上）。需要網路，每小時約用 50MB 流量；聲音只在電腦記憶體中處理，不會存檔。</p>
         </div>
         <div class="row">
           <label>字幕語言（本機辨識）
@@ -170,6 +169,6 @@
         </label>
       </section>
     </main>
-    <script type="module" src="./assets/main.js?v=8dc317e7"></script>
+    <script type="module" src="./assets/main.js?v=e1a27cf7"></script>
   </body>
 </html>

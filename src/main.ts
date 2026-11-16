@@ -47,7 +47,9 @@ const captions = new Captions();
 // 電腦運算：連到自己電腦上的 VoiceID 服務；斷線就自動改回手機本機辨識
 const remote = new RemoteAsr();
 let computeMode: ComputeMode = remoteSettings.mode;
-let useRemote = false; // 這次聆聽目前是不是用電腦辨識
+let useRemote = false; // 這次聆聽目前有沒有連上電腦（電腦負責修正每一句字幕）
+let segId = 0;
+let lastSegEnd = 0;
 let lastSceneKey = '';
 let filterStrangers = true; // 只顯示認識的人（濾掉陌生人）
 let lastStranger = false; // 最近一次判斷是不是陌生人
@@ -226,9 +228,10 @@ function feed(f: Float32Array) {
   engine.pushFloat(f);
   if (engine.mode === 'listening') ambient.push(f);
   // 本機字幕跟聲紋、環境偵測共用同一份音訊；用電腦運算時手機就不跑辨識模型（省電）
+  // 字幕一律由手機即時辨識（出字最快、不受網路影響）；連上電腦時，聲音也同步傳過去，讓電腦修正每一句
   if (asrOn) {
+    asr?.push(f);
     if (useRemote) remote.push(f);
-    else if (computeMode !== 'pc') asr?.push(f);
   }
 }
 
@@ -271,8 +274,7 @@ async function toggleListening() {
     // 停止
     engine.stop();
     asrOn = false;
-    if (useRemote) remote.flush();
-    else asr?.flush();
+    asr?.flush();
     captions.stop();
     capOnlyOn = false;
     void keepAwake(false);
@@ -493,7 +495,7 @@ captions.onChange = () => {
   render();
 };
 captions.onError = (m) => { $('capStatus').textContent = m; };
-captions.onStatus = (m) => { $('capState').textContent = useRemote ? m.replace('本機辨識聆聽中（不需網路）', '電腦辨識聆聽中') : m; };
+captions.onStatus = (m) => { $('capState').textContent = useRemote ? m.replace('本機辨識聆聽中（不需網路）', '手機即時辨識＋電腦逐句修正') : m; };
 engine.onResult = (r) => {
   quiet = !r.best;
   if (r.best) {
@@ -586,8 +588,16 @@ async function loadAsr(id: AsrModelId): Promise<string> {
   $('capState').textContent = `字幕狀態：下載「${ASR_MODELS[id].label}」辨識模型中…（第一次較久，之後會快取）`;
   try {
     const next = await StreamingAsr.load(ASR_MODELS[id].base);
-    next.onPartial = (t) => { if (!useRemote) captions.localPartial(t); };
-    next.onFinal = (t) => { if (!useRemote) captions.localFinal(t); };
+    next.onPartial = (t) => captions.localPartial(t);
+    next.onFinal = (t) => {
+      const id = ++segId;
+      const r = captions.localFinal(t, useRemote ? id : undefined);
+      if (r && useRemote) {
+        // 請電腦用較準的模型重新辨識這一句（開頭不跨進上一句，避免重複上一句的尾巴）
+        remote.segment(id, Math.max(r[0], lastSegEnd - 100), r[1]);
+        lastSegEnd = r[1];
+      }
+    };
     next.onLag = (sec) => { $('capStatus').textContent = `手機處理速度跟不上（落後 ${sec.toFixed(1)} 秒），字幕會延遲`; };
     asr = next;
     $('capState').textContent = `字幕狀態：「${ASR_MODELS[id].label}」模型已就緒`;
@@ -649,25 +659,15 @@ async function setupCaptionEngine() {
 // ---------- 運算方式（電腦 / 手機） ----------
 /** 依目前連線狀態決定字幕用電腦還是手機；聆聽中也可以隨時切換 */
 function chooseEngine() {
-  const want = computeMode !== 'phone' && remote.ready;
-  if (asrOn && want !== useRemote) {
-    if (want) {
-      asr?.flush(); // 手機上正在說的那句先收尾
-    } else {
-      if (captions.interim) captions.localFinal(captions.interim); // 電腦斷線：已經出現的字先保留
-      asr?.reset();
-    }
-  }
-  useRemote = want;
-  if (asrOn) $('capState').textContent = useRemote ? '字幕狀態：電腦辨識聆聽中' : computeMode === 'pc' ? '字幕狀態：等待電腦連線…' : '字幕狀態：本機辨識聆聽中（不需網路）';
+  useRemote = computeMode !== 'phone' && remote.ready;
+  if (asrOn) $('capState').textContent = useRemote ? '字幕狀態：手機即時辨識＋電腦逐句修正' : '字幕狀態：本機辨識聆聽中（不需網路）';
   updateComputeBadge();
 }
 
 function updateComputeBadge() {
   const b = $('computeBadge');
   if (computeMode === 'phone') { b.textContent = '手機運算'; b.className = 'badge'; return; }
-  if (remote.ready) { b.textContent = asrOn ? '電腦運算中' : '已連上電腦'; b.className = 'badge pc'; return; }
-  if (computeMode === 'pc') { b.textContent = '等待電腦'; b.className = 'badge wait'; return; }
+  if (remote.ready) { b.textContent = asrOn ? '電腦修正中' : '已連上電腦'; b.className = 'badge pc'; return; }
   b.textContent = asrOn && asr ? '手機運算中' : '手機運算';
   b.className = 'badge';
 }

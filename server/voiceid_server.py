@@ -121,6 +121,9 @@ class Session:
         self.asr.on_partial = lambda t: self.send({'type': 'partial', 'text': t})
         self.asr.on_final = self._on_final
         self.denoise_mode = hello.get('denoise', 'auto')  # auto / on / off
+        # segments：手機自己即時出字幕，電腦只把手機指定的每一句重新辨識（不跑串流模型，省電腦資源）
+        self.seg_mode = hello.get('mode') == 'segments'
+        self.mulaw = hello.get('codec') == 'mulaw'  # 聲音壓成 8 位元傳輸（流量減半）
         self.scene = set()
         self.dn = V.Denoiser(share=models.dn) if models.dn else None
         self.q = queue.Queue()
@@ -149,10 +152,56 @@ class Session:
     def control(self, msg):
         if msg.get('type') == 'scene':
             self.scene = set(msg.get('scene') or [])
+        elif msg.get('type') == 'segment':
+            try:
+                self.q.put(('seg', int(msg['id']), int(msg['start']), int(msg['end'])))
+            except (KeyError, TypeError, ValueError):
+                pass
         elif msg.get('type') == 'flush':
             self.q.put('flush')
         elif msg.get('type') == 'reset':
             self.q.put('reset')
+
+    def _decode(self, b: bytes):
+        if self.mulaw:
+            return MULAW[np.frombuffer(b, np.uint8)]
+        return np.frombuffer(b, np.int16).astype(np.float32) / 32768
+
+    def _audio(self, start, end):
+        parts = [c[max(0, start - n):max(0, end - n)] for n, c in self.chunks if n + len(c) > start and n < end]
+        return np.concatenate(parts) if parts else np.zeros(0, np.float32)
+
+    def _segment(self, sid, start, end):
+        """手機辨識完一句 → 用 SenseVoice 重新辨識同一段聲音，回傳「修正」"""
+        end = min(end, self.received)
+        seg = self._audio(max(0, start), end)
+        if len(seg) < 0.4 * SR or self.m.sv is None:
+            return
+        dn = self.denoise_on()
+        t_req = time.time()
+
+        def job():
+            nonlocal seg
+            t0 = time.time()
+            try:
+                if dn and self.dn:
+                    seg = 0.5 * seg + 0.5 * self.dn.process(seg)
+                with self.m.sv_lock:
+                    t = self.m.sv(seg, self.lang)
+            except Exception as ex:
+                log('整句辨識錯誤：', ex)
+                return
+            took = time.time() - t0
+            if took > 1.5 or t0 - t_req > 2:
+                log(f'⚠ 逐句修正較慢：句長 {len(seg) / SR:.1f} 秒、辨識 {took:.1f} 秒、排隊 {t0 - t_req:.1f} 秒')
+            if self.alive and has_words(t):
+                self.send({'type': 'revise', 'id': sid, 'text': split_lines(t)})
+
+        if self.alive:
+            try:
+                self.sv_pool.submit(job)
+            except RuntimeError:
+                pass
 
     def _reset_asr(self):
         # 串流字幕模型重新開始時，它的時間從 0 算起：記住對應到第幾個樣本，字幕時間才對得上
@@ -176,8 +225,12 @@ class Session:
             item = self.q.get()
             if item is None or not self.alive:
                 return
+            if isinstance(item, tuple):  # 手機請電腦重新辨識某一句
+                self._segment(*item[1:])
+                continue
             # 電腦跟不上（落後超過 4 秒）：丟掉積壓的舊聲音，直接跳到最新的，字幕才不會越來越慢
-            if isinstance(item, bytes) and self.q.qsize() > 40:
+            # （逐句修正模式不跑串流模型，聲音只是存起來，網路一次塞進來很多也不用丟）
+            if isinstance(item, bytes) and not self.seg_mode and self.q.qsize() > 40:
                 dropped = 0
                 while self.q.qsize() > 5:
                     nxt = self.q.get_nowait()
@@ -186,8 +239,8 @@ class Session:
                             return
                         continue
                     dropped += len(nxt) // 2
-                    self.chunks.append((self.received, np.frombuffer(nxt, np.int16).astype(np.float32) / 32768))
-                    self.received += len(nxt) // 2
+                    self.chunks.append((self.received, self._decode(nxt)))
+                    self.received += len(self.chunks[-1][1])
                 self.asr.flush()
                 self._reset_asr()
                 log(f'⚠ 電腦處理跟不上，略過 {dropped / SR:.1f} 秒的聲音以追上即時')
@@ -199,11 +252,13 @@ class Session:
                 if item == 'reset':
                     self._reset_asr()
                     continue
-                x = np.frombuffer(item, np.int16).astype(np.float32) / 32768
+                x = self._decode(item)
                 self.chunks.append((self.received, x))
                 self.received += len(x)
                 while self.chunks and self.chunks[0][0] < self.received - 30 * SR:
                     self.chunks.popleft()
+                if self.seg_mode:
+                    continue
                 self.asr.push(x)  # 串流字幕一律用原始聲音（實測降噪後的聲音會讓串流模型錯更多）
                 lag = self.q.qsize() * len(x) / SR
                 if lag > 2 and time.time() - last_lag > 3:
@@ -216,8 +271,7 @@ class Session:
     def _on_final(self, text, start, end):
         start, end = start + self.asr_base, end + self.asr_base
         end = min(end, self.received)
-        parts = [c[max(0, start - n):max(0, end - n)] for n, c in self.chunks if n + len(c) > start and n < end]
-        seg = np.concatenate(parts) if parts else np.zeros(0, np.float32)
+        seg = self._audio(start, end)
         dn = self.denoise_on()
         t_final = time.time()
         self.final_id += 1
@@ -258,6 +312,11 @@ class Session:
                 self.sv_pool.submit(job)
             except RuntimeError:  # 連線剛好關閉
                 pass
+
+
+# μ-law 8 位元 → 浮點數（查表）
+_u = np.arange(256, dtype=np.float32) / 255 * 2 - 1
+MULAW = (np.sign(_u) * (np.power(256.0, np.abs(_u)) - 1) / 255).astype(np.float32)
 
 
 def has_words(t):
@@ -480,7 +539,29 @@ class Server:
                 pass
             w.close()
 
+    def watch_updates(self):
+        files = [os.path.join(HERE, f) for f in ('voiceid_server.py', 'vcore.py')]
+        mt = {f: os.path.getmtime(f) for f in files}
+
+        def loop():
+            changed_at = None
+            while True:
+                time.sleep(10)
+                try:
+                    if changed_at is None and any(os.path.getmtime(f) != mt[f] for f in files):
+                        changed_at = time.time()
+                        log('偵測到程式更新，等目前沒人使用時自動重新啟動…')
+                    # 沒人在用就馬上重開；有人在用最多等 10 分鐘（手機會自動重連，字幕不中斷）
+                    if changed_at and (not self.sessions or time.time() - changed_at > 600):
+                        log('自動重新啟動以套用更新')
+                        os._exit(3)
+                except Exception:
+                    pass
+
+        threading.Thread(target=loop, daemon=True).start()
+
     async def run(self):
+        self.watch_updates()
         port = int(self.cfg['port'])
         srv = await asyncio.start_server(self.handle, '127.0.0.1', port)
         log(f'VoiceID 電腦運算服務已啟動：http://localhost:{port}')

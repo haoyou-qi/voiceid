@@ -50,11 +50,12 @@ export class Captions {
   }
 
   /** 本機辨識：一句話結束 */
-  localFinal(text: string) {
-    if (!this.running && !text) return;
+  localFinal(text: string, id?: number): [number, number] | null {
+    if (!this.running && !text) return null;
     this.interim = '';
-    if (text) this.commit(text);
+    const r = text ? this.commit(text, undefined, undefined, id) : null;
     this.onChange();
+    return r;
   }
 
   /** 電腦運算：一句話結束（電腦提供這句話的開始 / 結束時間，聲紋判斷更準） */
@@ -174,7 +175,8 @@ export class Captions {
     }
   }
 
-  commit(text: string, startMs?: number, endMs?: number, id?: number) {
+  /** 回傳這句話的 [開始, 結束] 時間（毫秒時間戳） */
+  commit(text: string, startMs?: number, endMs?: number, id?: number): [number, number] {
     const now = endMs ?? Date.now();
     // 沒抓到開始時間（辨識直接給最終結果）→ 用字數估計長度（中文大約每秒 4 個字）
     // 說話到出現字幕大約有 0.5 秒延遲，開始時間往前推一點
@@ -196,5 +198,6 @@ export class Captions {
       if (this.lines.length > 200) this.lines.shift();
       this.onChange();
     });
+    return [start, now];
   }
 }
