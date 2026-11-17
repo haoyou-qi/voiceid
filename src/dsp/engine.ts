@@ -40,7 +40,7 @@ export class VoiceIdEngine {
 
   constructor(public backend: Backend) {
     // 即時判斷看最近 3 秒（實測比 2 秒準：吵雜時本人認對 81%→94%），至少 1 秒人聲才下判斷，剛開口不急著猜
-    this.settings = { windowSec: 3, stepSec: 0.5, minVoicedSec: 1.0, ...backend.defaults };
+    this.settings = { windowSec: 3, stepSec: 0.5, minVoicedSec: 0.8, ...backend.defaults };
   }
 
   /** 目前引擎能用的聲紋檔（另一種引擎建的檔不能混用） */
@@ -156,15 +156,18 @@ export class VoiceIdEngine {
    * 整句辨識：拿 [startMs, endMs] 這段時間收到的音訊，一次算出聲紋。
    * 比 2 秒小段投票可靠很多（句子越長越準）。人聲不到 minSec 秒時回傳 null。
    */
-  async identifyRange(startMs: number, endMs: number, minSec = 0.8): Promise<IdResult | null> {
+  async identifyRange(startMs: number, endMs: number, minSec = 0.5): Promise<(IdResult & { voicedSec: number }) | null> {
     if (!this.usable().length) return null;
     const parts = this.recent.filter((c) => c.t >= startMs && c.t <= endMs + 100).map((c) => c.x);
     const all = new Float32Array(parts.reduce((s, x) => s + x.length, 0));
     let p = 0;
     for (const x of parts) { all.set(x, p); p += x.length; }
     const voiced = voicedAudio(all);
+    // 只用偵測到的人聲（摻進背景雜音會讓陌生人也變得「很像」）；很短的句子 0.5 秒人聲就判斷，
+    // 但短句比較不可靠，由呼叫端用比較嚴的門檻
     if (voiced.length < minSec * SR) return null;
-    return this.backend.identify(this.usable(), voiced, this.settings);
+    const r = await this.backend.identify(this.usable(), voiced, this.settings);
+    return { ...r, voicedSec: voiced.length / SR };
   }
 
   private reset() {

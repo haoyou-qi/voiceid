@@ -25,7 +25,8 @@ export function fromSentence(r: IdResult, sentenceThreshold: number | null, filt
  * 資訊太少 → 保留並標「？」，避免把自己的「好」「嗯」刪掉。
  */
 export function voteFrom(timeline: TimelineItem[], start: number, end: number, filter: boolean, windowMs = 3000): Attribution {
-  const rs = timeline.filter((x) => x.t - windowMs / 2 >= start && x.t - windowMs / 2 <= end);
+  // 判斷視窗 [t - windowMs, t] 跟這句話有重疊的結果都算（短句子才收得到結果）
+  const rs = timeline.filter((x) => x.t >= start + 300 && x.t - windowMs <= end - 300);
   const counts = new Map<string, number>();
   for (const x of rs) if (x.name) counts.set(x.name, (counts.get(x.name) ?? 0) + 1);
   const strangers = rs.filter((x) => x.stranger).length;

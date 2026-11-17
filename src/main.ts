@@ -55,12 +55,21 @@ let filterStrangers = true; // 只顯示認識的人（濾掉陌生人）
 let lastStranger = false; // 最近一次判斷是不是陌生人
 /** 聲紋辨識的時間軸：給字幕「整句投票」用 */
 const timeline: TimelineItem[] = [];
+/** 最近 50 句的說話者判斷紀錄（除錯用：在瀏覽器主控台輸入 voiceidDebug 可以看） */
+const attrLog: { start: number; end: number; best: string | null; score: number | null }[] = [];
+(window as unknown as { voiceidDebug: unknown }).voiceidDebug = { attrLog, timeline };
 captions.liveAttribute = (start: number, end: number): Attribution => voteFrom(timeline, start, end, filterStrangers);
 captions.attribute = async (start: number, end: number): Promise<Attribution> => {
   // 整句聲紋判斷；句子太短（人聲不到 0.8 秒）才退回投票
   const r = await engine.identifyRange(start, end);
+  attrLog.push({ start, end, best: r?.best?.name ?? null, score: r?.best ? +r.best.score.toFixed(3) : null });
+  if (attrLog.length > 50) attrLog.shift();
   if (r?.best) {
     const th = engine.backend instanceof CamppBackend ? engine.settings.threshold - engine.backend.sentenceOffset : null;
+    // 短句（人聲不到 1.5 秒）聲紋比較不可靠：要更像（+0.1）才標名字；介於中間標「？」保留，不當陌生人濾掉
+    if (th !== null && r.voicedSec < 1.5 && r.best.score >= th && r.best.score < th + 0.1) {
+      return { speaker: null, stranger: false, drop: false };
+    }
     return fromSentence(r, th, filterStrangers);
   }
   return voteFrom(timeline, start, end, filterStrangers);
