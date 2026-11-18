@@ -10,7 +10,8 @@
     "pack": "npm run build && evenhub pack app.json dist -o voiceid.ehpk",
     "test": "tsx test/synth.test.ts",
     "postinstall": "node scripts/setup.mjs",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "pages": "node scripts/build-pages.mjs"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "latest",
