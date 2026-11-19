@@ -66,9 +66,9 @@ export class CamppBackend implements Backend {
     const best = scores[0] ?? null;
     const conf = best ? Math.max(0, Math.min(1, (best.score - 0.2) / 0.6)) : 0;
     const rows = scores.map((x) => ({ name: x.name, score: x.score, detail: `相似度 ${x.score.toFixed(2)}` }));
-    if (!best || best.score < s.threshold) return { name: null, best: rows[0] ?? null, scores: rows, conf, stranger: true };
+    if (!best || best.score < s.threshold) return { name: null, best: rows[0] ?? null, scores: rows, conf, stranger: true, emb: e };
     if (scores.length > 1 && best.score - scores[1].score < s.margin)
-      return { name: null, best: rows[0], scores: rows, conf, stranger: false };
-    return { name: best.name, best: rows[0], scores: rows, conf, stranger: false };
+      return { name: null, best: rows[0], scores: rows, conf, stranger: false, emb: e };
+    return { name: best.name, best: rows[0], scores: rows, conf, stranger: false, emb: e };
   }
 }

@@ -15,8 +15,8 @@ import { detectPlatform, listMics, type MicSource, type Platform } from './platf
 import { RemoteAsr, remoteSettings, type ComputeMode } from './remote';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const ENROLL_SEC = 15;
-const MIN_ENROLL_SEC = 5;
+const ENROLL_SEC = 20; // 錄久一點聲紋比較穩（同類產品也是約 20 秒）
+const MIN_ENROLL_SEC = 8;
 const STORE_KEY = 'voiceid.profiles.v1';
 const SETTINGS_KEY = 'voiceid.settings.v2.'; // 後面接引擎種類
 const MIC_KEY = 'voiceid.mic.v1';
@@ -70,12 +70,62 @@ captions.attribute = async (start: number, end: number): Promise<Attribution> =>
     if (th !== null && r.voicedSec < 1.5 && r.best.score >= th && r.best.score < th + 0.1) {
       return { speaker: null, stranger: false, drop: false };
     }
-    return fromSentence(r, th, filterStrangers);
+    const a = fromSentence(r, th, filterStrangers);
+    // 不認識的人：夠長的句子（人聲 ≥ 1 秒）才分組，標成「說話者 1、2…」
+    if (a.stranger && r.emb && r.voicedSec >= 1.0) return { ...a, speaker: clusterStranger(r.emb) };
+    return a;
   }
   return voteFrom(timeline, start, end, filterStrangers);
 };
 
-const whoLabel = (speaker: string | null, stranger: boolean) => (capOnlyOn ? '' : stranger ? '陌生人' : speaker ?? '？');
+const whoLabel = (speaker: string | null, stranger: boolean) => (capOnlyOn ? '' : stranger ? speaker ?? '陌生人' : speaker ?? '？');
+
+// ---------- 自動更正：使用者自己列「錯字=正確」 ----------
+// （實測過「熱詞加權」讓模型偏向某些詞：在我們的測試集上錯字率沒有改善，反而略增，所以改用最直接的替換）
+function wireFixes() {
+  const ta = $<HTMLTextAreaElement>('fixes');
+  const KEY = 'voiceid.fixes.v1';
+  try { ta.value = localStorage.getItem(KEY) || ''; } catch { /* 略過 */ }
+  const apply = () => {
+    const pairs = ta.value.split(/\n/).map((l) => l.split(/[=＝]/)).filter((p) => p.length === 2 && p[0].trim() && p[1].trim())
+      .map(([a, b]) => [a.trim(), b.trim()] as [string, string])
+      .sort((x, y) => y[0].length - x[0].length); // 長的先換，避免短詞先換掉一部分
+    captions.fix = (s) => pairs.reduce((t, [a, b]) => t.split(a).join(b), s);
+    $('fixesMsg').textContent = pairs.length ? `已啟用 ${pairs.length} 組自動更正（新出現的字幕才會套用）` : '';
+    try { localStorage.setItem(KEY, ta.value); } catch { /* 略過 */ }
+  };
+  ta.oninput = apply;
+  apply();
+}
+
+// ---------- 不認識的人分組：說話者 1、2… ----------
+// 實測（CAM++）：同一個人兩句話的相似度最低約 0.71，不同人最高約 0.39，所以用 0.5 當「是同一個人」的標準
+const CLUSTER_SIM = 0.5;
+const MAX_CLUSTERS = 9;
+let strangerClusters: { label: string; c: number[]; n: number }[] = [];
+function clusterStranger(emb: number[]): string | null {
+  let best: (typeof strangerClusters)[number] | null = null;
+  let bestS = -1;
+  for (const k of strangerClusters) {
+    let s = 0;
+    for (let i = 0; i < emb.length; i++) s += emb[i] * k.c[i];
+    if (s > bestS) { bestS = s; best = k; }
+  }
+  if (best && bestS >= CLUSTER_SIM) {
+    // 中心點往新的這句移一點（平均），再正規化
+    const n = Math.min(best.n, 10);
+    let norm = 0;
+    for (let i = 0; i < emb.length; i++) { best.c[i] = (best.c[i] * n + emb[i]) / (n + 1); norm += best.c[i] ** 2; }
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < emb.length; i++) best.c[i] /= norm;
+    best.n++;
+    return best.label;
+  }
+  if (strangerClusters.length >= MAX_CLUSTERS) return null;
+  const label = `說話者 ${strangerClusters.length + 1}`;
+  strangerClusters.push({ label, c: emb.slice(), n: 1 });
+  return label;
+}
 
 // ---------- 儲存（localStorage 在少數環境會丟錯，所以全部包 try） ----------
 async function loadProfiles() {
@@ -843,7 +893,8 @@ async function boot() {
   await refreshMics();
   const langSel = $<HTMLSelectElement>('lang');
   langSel.onchange = () => { captions.lang = langSel.value; };
-  $('clearCap').onclick = () => captions.clear();
+  $('clearCap').onclick = () => { captions.clear(); strangerClusters = []; }; // 清除字幕時，「說話者 1、2」也重新編號
+  wireFixes();
   // 眼鏡字幕大小
   const gSize = $<HTMLSelectElement>('glassSize');
   try { gSize.value = localStorage.getItem('voiceid.glassSize.v2') || '14'; } catch { /* 略過 */ }

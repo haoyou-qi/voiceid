@@ -41,8 +41,12 @@ export class Captions {
   private commitQueue: Promise<void> = Promise.resolve(); // 整句判斷是非同步的，用佇列維持字幕順序
 
   /** 本機辨識：正在說的句子更新 */
+  /** 自動更正（使用者設定的「錯字=正確」），所有字幕文字顯示前都會經過 */
+  fix: (s: string) => string = (s) => s;
+
   localPartial(text: string) {
     if (!this.running) return;
+    text = this.fix(text);
     if (!this.segStart) this.segStart = Date.now() - 800; // 辨識出第一個字時，人大約已經說了快 1 秒
     if (!this.gotResult) { this.gotResult = true; this.onStatus('字幕狀態：本機辨識聆聽中（不需網路）'); }
     this.interim = text;
@@ -69,6 +73,7 @@ export class Captions {
 
   /** 電腦運算：先出現的快速字幕，被較準的整句辨識結果取代 */
   revise(id: number, text: string) {
+    text = this.fix(text);
     const line = this.byId.get(id);
     if (line) { line.text = text; this.onChange(); }
     else this.pendingRevise.set(id, text); // 這句還在判斷說話者，等加進字幕時再換
@@ -177,6 +182,7 @@ export class Captions {
 
   /** 回傳這句話的 [開始, 結束] 時間（毫秒時間戳） */
   commit(text: string, startMs?: number, endMs?: number, id?: number): [number, number] {
+    text = this.fix(text);
     const now = endMs ?? Date.now();
     // 沒抓到開始時間（辨識直接給最終結果）→ 用字數估計長度（中文大約每秒 4 個字）
     // 說話到出現字幕大約有 0.5 秒延遲，開始時間往前推一點

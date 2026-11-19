@@ -120,6 +120,11 @@
           </label>
           <button id="clearCap">清除字幕</button>
         </div>
+        <div class="row" style="flex-direction: column; align-items: stretch">
+          <label for="fixes">自動更正（常認錯的人名、專有名詞）：每行一組「錯字=正確」</label>
+          <textarea id="fixes" rows="3" placeholder="王傑土=王傑&#10;秘書屁=秘書P" autocapitalize="off" spellcheck="false"></textarea>
+          <span id="fixesMsg" class="hint"></span>
+        </div>
         <p class="hint">聲音處理順序：麥克風收到的<b>原始聲音</b>先給環境偵測（吵雜程度、音樂、車聲、警報）和聲紋辨識，降噪只用在字幕：用電腦運算時，電腦偵測到有音樂才自動降噪；手機運算不降噪（實測降噪會讓手機的字幕模型錯更多）。<br>注意：iPhone 控制中心的「麥克風模式」請保持「標準」。選「人聲隔離」會把音樂和環境聲幾乎全部消掉，環境偵測就會一直顯示安靜。</p>
         <label class="switch">
           <input type="checkbox" id="capOnly" />
@@ -140,7 +145,7 @@
 
       <section>
         <h2>建立聲紋檔</h2>
-        <p class="hint">請對方用平常的語速自然說話 15 秒（念一段文章或自我介紹都可以）。<br />建檔和辨識要用<b>同一種音源</b>（手機或眼鏡麥克風），準確度才會好。<br /><b>想更準：</b>建好後按名字旁的「＋追加錄音」，在不同情況再各錄一段（例如吵雜的地方、離手機遠一點、說英文），每人最多 6 段，辨識時會取最像的一段。</p>
+        <p class="hint">請對方用平常的語速自然說話 20 秒（念一段文章或自我介紹都可以）。<br />建檔和辨識要用<b>同一種音源</b>（手機或眼鏡麥克風），準確度才會好。<br /><b>想更準：</b>建好後按名字旁的「＋追加錄音」，在不同情況再各錄一段（例如吵雜的地方、離手機遠一點、說英文），每人最多 6 段，辨識時會取最像的一段。</p>
         <div class="row">
           <input id="name" placeholder="名字，例如：Wanda" maxlength="12" />
           <button id="enroll">錄音建檔</button>

@@ -39,6 +39,8 @@ export interface IdResult {
   conf: number; // 0~1，給信心條用
   /** 跟所有建檔者都不像（陌生人）。注意：name 為 null 也可能只是「兩個建檔者分不出來」，那種情況 stranger = false */
   stranger: boolean;
+  /** 這段聲音的聲紋向量（CAM++ 才有；用來把不認識的人分成「說話者 1、2…」） */
+  emb?: number[];
 }
 
 export interface Backend {
