@@ -96,7 +96,10 @@ VoiceID 是給**聽障者**用的對話輔助工具：
 | 整句門檻 | 門檻 − `sentenceOffset`（0.07）= 0.35 | `campp.ts` |
 | 短句（人聲 < 1.5 秒） | 要 ≥ 整句門檻 + 0.1 才標名字；介於中間標「？」，不濾掉 | `main.ts` captions.attribute |
 | 整句最少人聲 | 0.5 秒（不足就用即時判斷投票） | `engine.ts` identifyRange |
+| 建檔錄音長度 | 20 秒（最少 8 秒） | `main.ts` ENROLL_SEC |
 | 追加錄音 | 每人最多 6 段（1 主 + 5 追加），取最大相似度 | `engine.ts` finishEnrolling |
+| 不認識的人分組 | 人聲 ≥ 1 秒的陌生人句子，跟已有組中心相似度 ≥ 0.5 就同組，否則開新組「說話者 N」（最多 9 組；清除字幕時重設） | `main.ts` clusterStranger |
+| 自動更正 | 使用者列「錯字=正確」，所有字幕顯示前替換（長的先換） | `main.ts` wireFixes、`captions.fix` |
 | 手機斷句 / 換行 | 停頓 1.0 秒 / 0.5 秒 | `asr.ts` |
 | 電腦端斷句（舊串流模式） | 0.8 秒 | `vcore.py` |
 | 吵雜度分級 | < 45 安靜、< 58 普通、< 68 吵、其餘很吵（估計分貝） | `ambient.ts` LEVEL_EDGES |
@@ -122,7 +125,7 @@ VoiceID 是給**聽障者**用的對話輔助工具：
 ## 7. 資料儲存（全部在使用者手機的瀏覽器裡）
 
 - 聲紋檔：`voiceid.profiles.v1`（localStorage）＋ IndexedDB 一份；任何一份被清掉時，會用另一份補回
-- 設定：`voiceid.settings.v2.<campp|gmm>`、`voiceid.filterStrangers.v1`、`voiceid.capEngine.v1`、`voiceid.asrModel.v1`、`voiceid.ambientCalib.v2`、`voiceid.ambientSens.v1`、`voiceid.glassSize.v2`、`voiceid.capSize.v1`、`voiceid.mic.v1`
+- 設定：`voiceid.settings.v2.<campp|gmm>`、`voiceid.filterStrangers.v1`、`voiceid.capEngine.v1`、`voiceid.asrModel.v1`、`voiceid.ambientCalib.v2`、`voiceid.ambientSens.v1`、`voiceid.glassSize.v2`、`voiceid.capSize.v1`、`voiceid.mic.v1`、`voiceid.fixes.v1`（自動更正）
 - 電腦運算：`voiceid.remote.url.v1`、`voiceid.remote.key.v1`、`voiceid.compute.v1`（`auto`/`phone`），也同步存到 IndexedDB（key `remote`）
 - 通行碼：`voiceid.pass.v1`
 - 備份檔 JSON：`{ app:'voiceid', version:1, exportedAt, profiles[], remote?{url,key,mode} }`，只有聲紋向量，沒有錄音
@@ -166,6 +169,8 @@ VoiceID 是給**聽障者**用的對話輔助工具：
 - μ-law 8 位元傳輸：錯字率 17.8% → 18.2%，影響可忽略，流量減半
 - 聲紋模型比較了 7 個（CAM++ zh／zh_en advanced、ERes2Net 系列、WeSpeaker ResNet34）：**現行 CAM++ zh 整體最好**，zh_en advanced 只在人群吵雜時好一點；ERes2NetV2 慢 5 倍。（測試資料只有約 7 人，僅供參考）
 - 「每人自動門檻」實測無效，沒有採用
+- 「熱詞加權」（解碼時提高指定詞的分數）：greedy 解碼下錯字率 25.7% → 25.8～27.4%，沒有幫助，沒有採用；改做「自動更正」替換表
+- 不認識的人分組門檻 0.5：同一人兩句相似度最低約 0.71，不同人最高約 0.39（乾淨錄音）
 - 即時判斷視窗 3 秒比 2 秒準（吵雜時認對率 81% → 94%）
 - 短句（約 1 秒）：整句門檻提高 0.1 後，本人 12/12 認對，陌生人誤認從約 80% 降到約 40%
   - 同一支手機、同一個房間收音時，不同人的相似度也會被拉高到 0.3～0.5，這是目前最大的限制
